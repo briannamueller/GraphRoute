@@ -1,0 +1,33 @@
+dataset: my_dataset
+data_dir: data
+num_classes: 10
+seed: 0
+
+base:
+  models: [mlp64, mlp128, mlp256]
+  split_mode: oof_stacking
+  oof_folds: 5
+  epochs: 300
+  batch_size: 32
+  lr: 0.0005
+
+graph:
+  k: 5
+  node_feature_source: decision_space
+  edge_feature_source: decision_space
+  pool_calibrate: true
+
+gnn:
+  arch: gat
+  hidden_dim: 128
+  epochs: 300
+  patience: 20
+  es_metric: val_acc
+  ens_combination_mode: hard_weighted_voting
+  voting_weight_space: sig
+
+# Uncomment this section to run every combination of the listed values.
+# sweep:
+#   seed: [0, 1, 2]
+#   graph.k: [3, 5, 10]
+#   gnn.arch: [gat, graph_gps]

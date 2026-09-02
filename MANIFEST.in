@@ -1,0 +1,2 @@
+include quickstart.py run_experiments.py model_registry.py
+recursive-include configs *.yaml

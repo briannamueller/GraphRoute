@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphroute"
+version = "0.1.0"
+description = "Graph-based dynamic ensembling"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = "MIT"
+authors = [{ name = "Brianna Mueller" }]
+dependencies = [
+    "torch>=2.0.0",
+    "pydantic>=2",
+    "torch_geometric>=2.4.0",
+    "numpy<2",  # PyTorch 2.0 wheels require NumPy 1.x.
+    "scikit-learn",
+    "scipy",
+    "filelock",
+    "pyyaml>=6",
+    "pytorch-minimize",  # BFGS for the pool calibrators.
+]
+
+[project.urls]
+Repository = "https://github.com/briannamueller/GraphRoute"
+Issues = "https://github.com/briannamueller/GraphRoute/issues"
+
+[tool.setuptools.packages.find]
+include = ["graphroute*"]
