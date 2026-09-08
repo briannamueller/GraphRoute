@@ -125,9 +125,15 @@ def test_every_architecture_can_be_constructed():
     """gnn_kwargs sent every setting to every architecture, so two of the three
     raised TypeError on unexpected keyword arguments."""
     from graphroute.gnn import build_gnn
-    for arch in ("gat", "graph_gps", "mlp"):
+    for arch in ("gat", "hetero_gat", "graph_gps", "mlp"):
         cfg = GraphRouteConfig(dataset="test", gnn={"arch": arch})
         build_gnn(arch, **cfg.gnn_kwargs(input_dim=12, out_dim=3))
+
+
+def test_hetero_gat_is_classification_only():
+    with pytest.raises(Exception, match="classification-only"):
+        GraphRouteConfig(dataset="test", task="regression",
+                         gnn={"arch": "hetero_gat"})
 
 
 def test_regression_resolves_classification_only_defaults():

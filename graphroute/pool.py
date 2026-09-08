@@ -388,9 +388,18 @@ def train_pool_oof(
         outer_splits = KFold(
             n_splits=n_folds, shuffle=True, random_state=seed).split(np.arange(N))
     else:
-        outer_splits = StratifiedKFold(
-            n_splits=n_folds, shuffle=True, random_state=seed,
-        ).split(np.arange(N), all_labels_arr)
+        _, class_counts = np.unique(all_labels_arr, return_counts=True)
+        if class_counts.min() >= n_folds:
+            outer_splits = StratifiedKFold(
+                n_splits=n_folds, shuffle=True, random_state=seed,
+            ).split(np.arange(N), all_labels_arr)
+        else:
+            print("[OOF][warn] Some classes have fewer rows than outer folds; "
+                  "using deterministic unstratified KFold while preserving "
+                  "held-out predictions.")
+            outer_splits = KFold(
+                n_splits=n_folds, shuffle=True, random_state=seed,
+            ).split(np.arange(N))
 
     for fold_idx, (fit_idx, oof_idx) in enumerate(outer_splits):
         # Inner split: early stopping never touches the held-out fold.
@@ -403,8 +412,16 @@ def train_pool_oof(
             inner = StratifiedShuffleSplit(
                 n_splits=1, test_size=inner_val_ratio,
                 random_state=seed + fold_idx)
-            rel_train, rel_val = next(
-                inner.split(fit_idx, all_labels_arr[fit_idx]))
+            try:
+                rel_train, rel_val = next(
+                    inner.split(fit_idx, all_labels_arr[fit_idx]))
+            except ValueError:
+                print(f"[OOF][warn] Fold {fold_idx + 1} cannot support a "
+                      "stratified inner split; using deterministic ShuffleSplit.")
+                inner = ShuffleSplit(
+                    n_splits=1, test_size=inner_val_ratio,
+                    random_state=seed + fold_idx)
+                rel_train, rel_val = next(inner.split(fit_idx))
         inner_train_idx, inner_val_idx = fit_idx[rel_train], fit_idx[rel_val]
 
         inner_train_loader = loader(Subset(train_dataset, inner_train_idx.tolist()), True)

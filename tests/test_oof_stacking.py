@@ -7,6 +7,7 @@ indices whose predictions that fold contributes.
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.model_selection import KFold
 from torch.utils.data import TensorDataset
 
 import graphroute.pool as pool
@@ -98,6 +99,45 @@ def test_oof_predictions_are_out_of_sample(monkeypatch):
     assert id(val_set) not in fold_ds_ids, "val_dataset must not be touched during folds"
     print("  val_dataset untouched during the fold stage        OK")
     print("\nall assertions passed")
+
+
+def test_rare_class_uses_leakage_safe_unstratified_fallback(monkeypatch, capsys):
+    calls = []
+
+    def recording_fit(model, train_loader, val_loader, device, **kw):
+        def indices(loader):
+            dataset = loader.dataset
+            return (set(np.asarray(dataset.indices).tolist())
+                    if hasattr(dataset, "indices") else None)
+        calls.append((indices(train_loader), indices(val_loader)))
+        return 1, 0.0, model
+
+    monkeypatch.setattr(pool, "fit_classifier", recording_fit)
+    gen = torch.Generator().manual_seed(4)
+    x = torch.randn(21, N_FEATURES, generator=gen)
+    y = torch.tensor([0] * 10 + [1] * 10 + [2])
+    train_set = TensorDataset(x, y)
+    val_set = TensorDataset(
+        torch.randn(9, N_FEATURES, generator=gen),
+        torch.tensor([0, 1, 2] * 3),
+    )
+
+    _, oof_logits, _ = train_pool_oof(
+        [lambda: nn.Linear(N_FEATURES, N_CLASSES)],
+        train_set, val_set, torch.device("cpu"),
+        n_folds=3, batch_size=8, max_epochs=1, patience=1,
+        num_classes=N_CLASSES, seed=7,
+    )
+
+    folds = list(KFold(n_splits=3, shuffle=True, random_state=7).split(
+        np.arange(len(train_set))))
+    for (fit_train, fit_val), (_, held_out) in zip(calls[:3], folds):
+        held_out = set(held_out.tolist())
+        assert not fit_train & held_out
+        assert not fit_val & held_out
+        assert not fit_train & fit_val
+    assert oof_logits.shape == (len(train_set), 1, N_CLASSES)
+    assert "unstratified KFold" in capsys.readouterr().out
 
 
 if __name__ == "__main__":                      # still runnable directly

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from graphroute.gnn import SampleGAT, SampleGraphGPS, SampleMLP
+from graphroute.gnn import HeteroGAT, SampleGAT, SampleGraphGPS, SampleMLP
 from graphroute.graph import build_graph
 
 
@@ -22,7 +22,7 @@ EVAL_FEATURES = torch.randn(5, FEATURE_DIM, generator=_generator)
 EVAL_DS = torch.randn(5, POOL_SIZE * NUM_CLASSES, generator=_generator)
 
 
-def _graph(eval_indices: torch.Tensor):
+def _graph(eval_indices: torch.Tensor, *, hetero: bool = False):
     eval_features = EVAL_FEATURES[eval_indices]
     eval_ds = EVAL_DS[eval_indices]
     data, _ = build_graph(
@@ -42,6 +42,7 @@ def _graph(eval_indices: torch.Tensor):
         weight_mode="uniform",
         num_classes=NUM_CLASSES,
         eval_type="test",
+        include_classifier_context=hetero,
     )
     return data
 
@@ -59,43 +60,106 @@ def _model(arch: str):
     elif arch == "gat":
         model = SampleGAT(
             **common, heads=2, attn_dropout=0.0, edge_dropout=0.0)
+    elif arch == "hetero_gat":
+        model = HeteroGAT(
+            **common, heads=2, attn_dropout=0.0, edge_dropout=0.0)
     else:
         model = SampleGraphGPS(
             **common, heads=2, attn_dropout=0.0, edge_dropout=0.0)
     return model.eval()
 
 
-@pytest.mark.parametrize("arch", ["gat", "graph_gps", "mlp"])
+@pytest.mark.parametrize("arch", ["gat", "hetero_gat", "graph_gps", "mlp"])
 def test_predictions_do_not_depend_on_evaluation_batch_composition(arch):
     """A complete split must equal any concatenation of its query batches."""
     torch.manual_seed(7)
     model = _model(arch)
     all_indices = torch.arange(len(EVAL_FEATURES))
 
-    full_graph = _graph(all_indices)
+    full_graph = _graph(all_indices, hetero=arch == "hetero_gat")
     full = model(full_graph)[full_graph["sample"].test_mask]
 
     parts = []
     for indices in (torch.tensor([0, 1]), torch.tensor([2]), torch.tensor([3, 4])):
-        graph = _graph(indices)
+        graph = _graph(indices, hetero=arch == "hetero_gat")
         parts.append(model(graph)[graph["sample"].test_mask])
 
     assert torch.allclose(full, torch.cat(parts), atol=1e-6, rtol=1e-6)
 
 
-@pytest.mark.parametrize("arch", ["gat", "graph_gps", "mlp"])
+@pytest.mark.parametrize("arch", ["gat", "hetero_gat", "graph_gps", "mlp"])
 def test_reordering_evaluation_rows_only_reorders_predictions(arch):
     torch.manual_seed(11)
     model = _model(arch)
     original_indices = torch.arange(len(EVAL_FEATURES))
     permutation = torch.tensor([3, 0, 4, 1, 2])
 
-    original_graph = _graph(original_indices)
+    original_graph = _graph(original_indices, hetero=arch == "hetero_gat")
     original = model(original_graph)[original_graph["sample"].test_mask]
-    permuted_graph = _graph(permutation)
+    permuted_graph = _graph(permutation, hetero=arch == "hetero_gat")
     permuted = model(permuted_graph)[permuted_graph["sample"].test_mask]
 
     assert torch.allclose(permuted, original[permutation], atol=1e-6, rtol=1e-6)
+
+
+def test_hetero_gat_hides_a_training_query_correctness_from_itself():
+    torch.manual_seed(17)
+    model = _model("hetero_gat")
+    first = model(_graph(torch.tensor([0]), hetero=True))
+
+    original_meta = TRAIN_META[0].clone()
+    try:
+        TRAIN_META[0] = 1.0 - TRAIN_META[0]
+        changed = model(_graph(torch.tensor([0]), hetero=True))
+    finally:
+        TRAIN_META[0].copy_(original_meta)
+
+    assert torch.allclose(first[0], changed[0], atol=1e-6, rtol=1e-6)
+
+
+def test_hetero_graph_uses_only_training_correctness_edges():
+    graph = _graph(torch.tensor([0, 1]), hetero=True)
+    correct_rel = ("classifier", "correct", "context")
+    similar_rel = ("context", "similar", "sample")
+
+    assert graph["context"].num_nodes == len(TRAIN_FEATURES)
+    assert graph["classifier"].num_nodes == POOL_SIZE
+    assert graph[correct_rel].edge_index.size(1) == int(TRAIN_META.sum().item())
+    assert correct_rel in graph.edge_types
+    assert similar_rel in graph.edge_types
+    # A training row's context copy must never feed its own query copy.
+    similar = graph[similar_rel].edge_index
+    assert not bool((similar[0] == similar[1]).any())
+
+
+@pytest.mark.parametrize("loss_target", ["meta_labels", "ensemble"])
+def test_hetero_gat_runs_end_to_end_with_existing_objectives(loss_target):
+    from torch.utils.data import TensorDataset
+
+    from graphroute.config import GraphRouteConfig
+    from graphroute.run import fit_graphroute
+
+    torch.manual_seed(31)
+    dataset = TensorDataset(
+        torch.randn(32, FEATURE_DIM), torch.arange(32) % NUM_CLASSES)
+    cfg = GraphRouteConfig(
+        dataset="hetero-test", num_classes=NUM_CLASSES, device="cpu",
+        loss_target=loss_target, val_ratio=0.25,
+        base={"split_mode": "oof_stacking", "oof_folds": 2,
+              "epochs": 1, "es_patience": 1, "batch_size": 8},
+        graph={"pool_calibrate": False, "k": 2},
+        gnn={"arch": "hetero_gat", "output_head": "dot",
+             "epochs": 2, "patience": 1},
+    )
+    fitted = fit_graphroute(
+        cfg, dataset, models=[torch.nn.Linear(FEATURE_DIM, NUM_CLASSES)],
+        cache_dir="",
+    )
+    result = fitted.predict(dataset, cache_outputs=False)
+
+    assert result["predictions"].shape == (len(dataset),)
+    assert result["selection_scores"].shape == (len(dataset), 1)
+    assert torch.isfinite(result["selection_scores"]).all()
 
 
 def test_graph_gps_evaluation_nodes_cannot_change_other_nodes():

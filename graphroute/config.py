@@ -85,7 +85,7 @@ class GNNConfig(BaseModel):
     """GNN meta-learner and ensemble rule."""
     model_config = {"extra": "forbid"}
 
-    arch: Literal["gat", "graph_gps", "mlp"] = Field(
+    arch: Literal["gat", "hetero_gat", "graph_gps", "mlp"] = Field(
         default="gat",
         description="Architecture used for the GraphRoute meta-learner.",
     )
@@ -179,6 +179,10 @@ class GraphRouteConfig(BaseModel):
     def _regression_excludes_class_notions(self):
         """Resolve regression defaults and reject classification-only settings."""
         if self.task == "regression":
+            if self.gnn.arch == "hetero_gat":
+                raise ValueError(
+                    "gnn.arch='hetero_gat' builds binary correctness edges and is "
+                    "currently classification-only.")
             if "num_classes" in self.model_fields_set and self.num_classes != 1:
                 raise ValueError(
                     "Scalar regression uses one model output; omit num_classes or "
@@ -318,6 +322,7 @@ class GraphRouteConfig(BaseModel):
             pair_feat_dim=pair_feat_dim, pair_only=g.pair_only,
         )
         cls = build_gnn.__globals__[
-            {"gat": "SampleGAT", "graph_gps": "SampleGraphGPS", "mlp": "SampleMLP"}[g.arch]]
+            {"gat": "SampleGAT", "hetero_gat": "HeteroGAT",
+             "graph_gps": "SampleGraphGPS", "mlp": "SampleMLP"}[g.arch]]
         accepted = set(inspect.signature(cls.__init__).parameters)
         return {k: v for k, v in candidate.items() if k in accepted}

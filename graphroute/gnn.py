@@ -42,20 +42,25 @@ class LinearHead(nn.Module):
 
 
 class DotLearnedHead(nn.Module):
-    """Cosine-similarity head with a learnable pool-member embedding table.
+    """Cosine-similarity head over sample and pool-member embeddings.
 
     ``logits[n, j] = temperature * cosine(h_sample[n], clf_emb[j]) + bias[j]``
 
-    Uses a separate learnable parameter table [M, hidden_dim] trained
-    end-to-end (CLIP-style learned temperature, clamped to [1, 100]).
+    Homogeneous architectures use a learned parameter table [M, hidden_dim].
+    Heterogeneous architectures instead supply their classifier-node embeddings.
+    The CLIP-style learned temperature is clamped to [1, 100].
     """
 
     _LOGIT_SCALE_MAX = 4.6052  # ln(100)
 
-    def __init__(self, hidden_dim: int, out_dim: int):
+    def __init__(self, hidden_dim: int, out_dim: int, *,
+                 learned_classifier_table: bool = True):
         super().__init__()
-        self.score_clf_emb = nn.Parameter(torch.empty(out_dim, hidden_dim))
-        nn.init.normal_(self.score_clf_emb, std=0.02)
+        if learned_classifier_table:
+            self.score_clf_emb = nn.Parameter(torch.empty(out_dim, hidden_dim))
+            nn.init.normal_(self.score_clf_emb, std=0.02)
+        else:
+            self.register_parameter("score_clf_emb", None)
         self.clf_bias = nn.Parameter(torch.zeros(out_dim))
         init_val = torch.tensor(2.6593)  # ln(1/0.07), CLIP default
         self.logit_scale = nn.Parameter(init_val)
@@ -63,8 +68,11 @@ class DotLearnedHead(nn.Module):
     def forward(self, sample_emb: torch.Tensor,
                 clf_emb: torch.Tensor | None = None,
                 pair_feats: torch.Tensor | None = None) -> torch.Tensor:
+        c = clf_emb if clf_emb is not None else self.score_clf_emb
+        if c is None:
+            raise ValueError("The dot head requires classifier embeddings.")
         s = F.normalize(sample_emb, dim=-1)
-        c = F.normalize(self.score_clf_emb, dim=-1)
+        c = F.normalize(c, dim=-1)
         scale = self.logit_scale.clamp(max=self._LOGIT_SCALE_MAX).exp()
         return scale * (s @ c.T) + self.clf_bias.unsqueeze(0)
 
@@ -72,7 +80,8 @@ class DotLearnedHead(nn.Module):
 class ConcatMLPLearnedHead(nn.Module):
     """MLP([h_sample || learned_clf_emb || pair_feats]) -> scalar per pair.
 
-    Uses a learnable pool-member embedding table [M, hidden_dim].
+    Uses a learnable pool-member embedding table [M, hidden_dim] unless a
+    heterogeneous architecture supplies classifier-node embeddings.
 
     Args:
         hidden_dim: Embedding dimension for samples and pool members.
@@ -84,7 +93,8 @@ class ConcatMLPLearnedHead(nn.Module):
 
     def __init__(self, hidden_dim: int, out_dim: int, *,
                  normalize: bool = False,
-                 pair_feat_dim: int = 0, pair_only: bool = False):
+                 pair_feat_dim: int = 0, pair_only: bool = False,
+                 learned_classifier_table: bool = True):
         super().__init__()
         self.pair_feat_dim = int(pair_feat_dim)
         self.pair_only = pair_only
@@ -92,8 +102,11 @@ class ConcatMLPLearnedHead(nn.Module):
             self.score_clf_emb = None
             mlp_input_dim = hidden_dim + self.pair_feat_dim
         else:
-            self.score_clf_emb = nn.Parameter(torch.empty(out_dim, hidden_dim))
-            nn.init.normal_(self.score_clf_emb, std=0.02)
+            if learned_classifier_table:
+                self.score_clf_emb = nn.Parameter(torch.empty(out_dim, hidden_dim))
+                nn.init.normal_(self.score_clf_emb, std=0.02)
+            else:
+                self.register_parameter("score_clf_emb", None)
             mlp_input_dim = 2 * hidden_dim + self.pair_feat_dim
         self.mlp = nn.Sequential(
             nn.Linear(mlp_input_dim, hidden_dim),
@@ -119,7 +132,9 @@ class ConcatMLPLearnedHead(nn.Module):
             s_exp = sample_emb.unsqueeze(1).expand(N, M, D)
             combined = torch.cat([s_exp, pair_feats], dim=2)  # [N, M, D + P]
         else:
-            c = self.score_clf_emb
+            c = clf_emb if clf_emb is not None else self.score_clf_emb
+            if c is None:
+                raise ValueError("The concat_mlp head requires classifier embeddings.")
             if self.normalize:
                 c = self.clf_norm(c)
             M = c.shape[0]
@@ -136,7 +151,8 @@ class ConcatMLPLearnedHead(nn.Module):
 def build_output_head(mode: str, hidden_dim: int, out_dim: int, *,
                       normalize: bool = False,
                       pair_feat_dim: int = 0,
-                      pair_only: bool = False) -> nn.Module:
+                      pair_only: bool = False,
+                      learned_classifier_table: bool = True) -> nn.Module:
     """Factory for output head modules.
 
     Args:
@@ -149,13 +165,17 @@ def build_output_head(mode: str, hidden_dim: int, out_dim: int, *,
     """
     mode = mode.lower()
     if mode == "dot":
-        return DotLearnedHead(hidden_dim, out_dim)
+        return DotLearnedHead(
+            hidden_dim, out_dim,
+            learned_classifier_table=learned_classifier_table,
+        )
     if mode == "concat_mlp":
         return ConcatMLPLearnedHead(
             hidden_dim, out_dim,
             normalize=normalize,
             pair_feat_dim=pair_feat_dim,
             pair_only=pair_only,
+            learned_classifier_table=learned_classifier_table,
         )
     return LinearHead(hidden_dim, out_dim)
 
@@ -317,6 +337,149 @@ class SampleGAT(nn.Module):
         return self.sample_head(x)
 
 
+class HeteroGAT(nn.Module):
+    """Leakage-safe heterogeneous GAT over classifier, context, and query nodes.
+
+    Classifier nodes connect by observed OOF correctness only to copies of the
+    training samples stored as ``context`` nodes.  Context nodes then send local
+    similarity messages to ``sample`` query nodes.  Queries never send messages
+    and have no direct classifier edges, so a training row cannot read its own
+    correctness labels and evaluation rows cannot affect one another.
+    """
+
+    def __init__(
+        self,
+        *,
+        input_dim: int,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
+        heads: int = 4,
+        feat_dropout: float = 0.2,
+        attn_dropout: float = 0.2,
+        edge_dropout: float = 0.0,
+        out_dim: int = 1,
+        use_sample_residual: bool = False,
+        use_edge_attr: bool = False,
+        concat: bool = False,
+        output_head_mode: str = "linear",
+        output_head_norm: bool = False,
+        pair_feat_dim: int = 0,
+        pair_only: bool = False,
+    ) -> None:
+        super().__init__()
+        self.out_dim = int(out_dim)
+        self.edge_dropout = float(edge_dropout)
+        self.use_sample_residual = bool(use_sample_residual)
+        self.use_edge_attr = bool(use_edge_attr)
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(feat_dropout)
+
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        self.classifier_embedding = nn.Embedding(self.out_dim, hidden_dim)
+        nn.init.normal_(self.classifier_embedding.weight, std=0.02)
+
+        edge_dim = 1 if self.use_edge_attr else None
+        self.correct_convs = nn.ModuleList()
+        self.similarity_convs = nn.ModuleList()
+        self.context_residuals = nn.ModuleList()
+        self.sample_residuals = nn.ModuleList()
+
+        current_dim = hidden_dim
+        for layer_i in range(num_layers):
+            is_last = layer_i == num_layers - 1
+            do_concat = bool(concat) and not is_last
+            next_dim = hidden_dim * heads if do_concat else hidden_dim
+
+            self.correct_convs.append(
+                GATv2Conv(
+                    (hidden_dim, current_dim), hidden_dim,
+                    heads=heads, concat=do_concat, dropout=attn_dropout,
+                    add_self_loops=False,
+                )
+            )
+            self.similarity_convs.append(
+                GATv2Conv(
+                    (next_dim, current_dim), hidden_dim,
+                    heads=heads, concat=do_concat, dropout=attn_dropout,
+                    add_self_loops=False, edge_dim=edge_dim,
+                )
+            )
+            self.context_residuals.append(
+                nn.Identity() if current_dim == next_dim
+                else nn.Linear(current_dim, next_dim, bias=False)
+            )
+            self.sample_residuals.append(
+                nn.Identity() if current_dim == next_dim
+                else nn.Linear(current_dim, next_dim, bias=False)
+            )
+            current_dim = next_dim
+
+        self.output_head = build_output_head(
+            output_head_mode, hidden_dim, self.out_dim,
+            normalize=output_head_norm,
+            pair_feat_dim=pair_feat_dim,
+            pair_only=pair_only,
+            learned_classifier_table=False,
+        )
+
+    def forward(self, data: HeteroData) -> torch.Tensor:
+        correct_rel = ("classifier", "correct", "context")
+        similarity_rel = ("context", "similar", "sample")
+        if correct_rel not in data.edge_index_dict:
+            raise ValueError("hetero_gat requires classifier-correct-context edges.")
+        if similarity_rel not in data.edge_index_dict:
+            raise ValueError("hetero_gat requires context-similar-sample edges.")
+
+        sample_x = self.input_proj(data["sample"].x)
+        context_x = self.input_proj(data["context"].x)
+        original_sample = sample_x if self.use_sample_residual else None
+
+        num_classifier_nodes = int(data["classifier"].num_nodes)
+        if num_classifier_nodes != self.out_dim:
+            raise ValueError(
+                f"Expected {self.out_dim} classifier nodes, got "
+                f"{num_classifier_nodes}.")
+        classifier_ids = torch.arange(self.out_dim, device=sample_x.device)
+        classifier_x = self.classifier_embedding(classifier_ids)
+
+        correct_ei = data[correct_rel].edge_index
+        similarity_ei = data[similarity_rel].edge_index
+        similarity_ea = None
+        if self.use_edge_attr:
+            similarity_ea = getattr(data[similarity_rel], "edge_attr", None)
+            if similarity_ea is not None and similarity_ea.dim() == 1:
+                similarity_ea = similarity_ea.view(-1, 1)
+
+        for layer_idx, (correct_conv, similarity_conv) in enumerate(
+            zip(self.correct_convs, self.similarity_convs)
+        ):
+            context_next = correct_conv(
+                (classifier_x, context_x), correct_ei)
+            context_next = context_next + self.context_residuals[layer_idx](context_x)
+
+            ei, ea = _drop_edges_with_attr(
+                similarity_ei, similarity_ea,
+                self.edge_dropout, self.training,
+            )
+            sample_next = similarity_conv(
+                (context_next, sample_x), ei, edge_attr=ea)
+            sample_next = sample_next + self.sample_residuals[layer_idx](sample_x)
+
+            if layer_idx != len(self.correct_convs) - 1:
+                context_x = self.dropout(self.activation(context_next))
+                sample_x = self.dropout(self.activation(sample_next))
+            else:
+                context_x = self.activation(context_next)
+                sample_x = self.activation(sample_next)
+
+        if original_sample is not None:
+            sample_x = sample_x + original_sample
+
+        pair_feats = getattr(data["sample"], "pair_feats", None)
+        return self.output_head(
+            sample_x, classifier_x, pair_feats=pair_feats)
+
+
 class SampleGraphGPS(nn.Module):
     """Inductive GraphGPS with local GATv2 and train-memory attention.
 
@@ -474,11 +637,13 @@ def build_gnn(arch: str, **kwargs) -> nn.Module:
     """Factory to instantiate a GNN architecture by name.
 
     Args:
-        arch: One of "gat", "graph_gps", "mlp".
+        arch: One of "gat", "hetero_gat", "graph_gps", "mlp".
         **kwargs: Forwarded to the architecture constructor.
     """
     if arch == "gat":
         return SampleGAT(**kwargs)
+    if arch == "hetero_gat":
+        return HeteroGAT(**kwargs)
     if arch == "graph_gps":
         return SampleGraphGPS(**kwargs)
     if arch == "mlp":

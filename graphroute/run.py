@@ -192,7 +192,8 @@ class GraphRouteModel:
             eval_edge_features=edge, eval_meta=None, eval_type="test",
             k=g.k, neighbor_mode=g.neighbor_mode, weight_mode=g.weight_mode,
             num_classes=self.cfg.num_classes,
-            train_edge_features=self.train_edge_features, task=self.cfg.task)
+            train_edge_features=self.train_edge_features, task=self.cfg.task,
+            include_classifier_context=self.cfg.gnn.arch == "hetero_gat")
         data = data.to(self.device)
         eval_mask = data["sample"].test_mask.bool()
         args = self.cfg.gnn_namespace()
@@ -455,7 +456,8 @@ def fit_graphroute(
         eval_ds=ds["validation"], eval_edge_features=edge["validation"],
         eval_meta=meta_val, eval_type="val", k=g.k,
         neighbor_mode=g.neighbor_mode, weight_mode=g.weight_mode,
-        num_classes=cfg.num_classes, train_edge_features=edge["train"], task=cfg.task)
+        num_classes=cfg.num_classes, train_edge_features=edge["train"], task=cfg.task,
+        include_classifier_context=cfg.gnn.arch == "hetero_gat")
 
     # Pool training consumes random numbers on a miss but not a hit. Resetting at
     # the GNN boundary makes the fitted ensemble independent of cache state.

@@ -166,11 +166,18 @@ When oof_stacking is combined with embedding-based representations, GraphRoute u
 
 | Argument | Meaning | Available options |
 | --- | --- | --- |
-| `gnn.arch` | Selects the architecture used to learn the dynamic selection rule. | `"gat"`, `"graph_gps"`, `"mlp"` |
+| `gnn.arch` | Selects the architecture used to learn the dynamic selection rule. | `"gat"`, `"hetero_gat"`, `"graph_gps"`, `"mlp"` |
 | `gnn.loss` | Selects the GNN training loss. | `"bce"`, `"focal_bce"`, `"soft_bce"`, `"regression"` |
 | `gnn.ens_combination_mode` | Determines how model scores form the final prediction. | `"soft_weighted_voting"`, `"hard_weighted_voting"`, `"soft_voting"`, `"hard_voting"`, `"weighted_mean"` for regression |
 | `gnn.voting_weight_space` | Selects how GNN scores become voting weights; when omitted, GraphRoute chooses based on `loss_target`. | `None`, `"logit"`, `"sig"` |
 | `gnn.fallback` | Selects the fallback rule when no model receives a positive selection weight. | `"uniform"`, `"wacc"`, `"acc"`, `"bacc"` |
+
+`hetero_gat` adds learned classifier nodes and separate copies of the training
+samples as context nodes. OOF correctness defines classifier-to-context edges,
+and the existing similarity graph defines context-to-query edges. Query samples
+have no direct classifier edges, so they can use classifier information only
+through other training samples. This architecture is currently available for
+classification only.
 
 
 ## Reusing a trained pool

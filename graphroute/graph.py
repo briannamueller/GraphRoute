@@ -367,6 +367,7 @@ def build_graph(
     eval_edge_features: np.ndarray | None = None,
     eval_type: str = "val",
     task: str = "classification",
+    include_classifier_context: bool = False,
 ) -> Tuple[HeteroData, dict]:
     """Build the training-context KNN graph for fitting or prediction.
 
@@ -395,6 +396,10 @@ def build_graph(
         eval_edge_features: Separate features for edge distance [N_eval, D'].
         eval_type: "val" or "test".
         task: "classification" or "regression"; controls target dtype.
+        include_classifier_context: Add the leakage-safe classifier -> context ->
+            sample relations used by ``hetero_gat``. Correctness edges are built
+            from training meta-labels only; evaluation meta-labels are never used
+            as graph inputs.
 
     Returns:
         (data, meta): HeteroData graph and metadata dict.
@@ -419,6 +424,7 @@ def build_graph(
 
     n_train = len(train_features_np)
     has_eval = eval_features is not None
+    M = train_meta.size(1)
 
     if has_eval:
         eval_features_np = _to_np(eval_features)
@@ -430,7 +436,6 @@ def build_graph(
         combined_labels = np.concatenate([train_labels_np, eval_labels_np], axis=0)
         combined_ds = torch.cat([train_ds, eval_ds], dim=0)
 
-        M = train_meta.size(1)
         if eval_meta is None:
             eval_meta = torch.zeros(n_eval, M)
         elif eval_meta.shape != (n_eval, M):
@@ -484,6 +489,34 @@ def build_graph(
 
     # Enforce bidirectionality (train sources only)
     data = enforce_bidirectionality(data)
+
+    if include_classifier_context:
+        if task != "classification":
+            raise ValueError(
+                "hetero_gat correctness edges are currently classification-only.")
+
+        # Context nodes are separate copies of the labelled reference samples.
+        # Query samples never receive classifier edges directly.  The existing SS
+        # relation already excludes self-neighbours and has training-only sources,
+        # so its source ids map directly onto the context rows.
+        data["context"].x = node_x[:n_train].clone()
+        data["classifier"].num_nodes = M
+
+        correct_pairs = torch.nonzero(
+            train_meta.detach().cpu().float() > 0.5,
+            as_tuple=False,
+        )
+        if correct_pairs.numel() == 0:
+            correct_edge_index = torch.zeros((2, 0), dtype=torch.long)
+        else:
+            # nonzero returns [sample_id, classifier_id].
+            correct_edge_index = correct_pairs[:, [1, 0]].T.contiguous()
+        data[("classifier", "correct", "context")].edge_index = correct_edge_index
+
+        ss_rel = ("sample", "ss", "sample")
+        context_rel = ("context", "similar", "sample")
+        data[context_rel].edge_index = data[ss_rel].edge_index.clone()
+        data[context_rel].edge_attr = data[ss_rel].edge_attr.clone()
 
     meta = {
         "n_train": n_train,
