@@ -7,7 +7,45 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 
 from graphroute.cli import build_parser, config_from_args
-from graphroute.config import BaseConfig, GNNConfig, GraphConfig, GraphRouteConfig
+from graphroute.config import (BaseConfig, GNNConfig, GraphConfig,
+                               GraphRouteConfig, GraphRouteSettings)
+
+
+def test_modeling_settings_can_be_combined_with_runtime_context():
+    settings = GraphRouteSettings(
+        loss_target="ensemble",
+        base={"epochs": 12},
+        graph={"k": 9},
+        gnn={"arch": "mlp", "hidden_dim": 64},
+    )
+    cfg = GraphRouteConfig(
+        **settings.model_dump(),
+        dataset="test",
+        num_classes=3,
+        seed=7,
+        device="cpu",
+    )
+
+    assert cfg.loss_target == "ensemble"
+    assert cfg.base.epochs == 12
+    assert cfg.graph.k == 9
+    assert cfg.gnn.arch == "mlp"
+    assert cfg.gnn.hidden_dim == 64
+    assert cfg.dataset == "test"
+    assert cfg.seed == 7
+
+
+def test_graph_settings_accept_custom_features_and_similarity_options():
+    graph = GraphConfig(
+        node_feature_source="embedding_concat",
+        edge_feature_source="diagnoses",
+        embedding_normalization="per_model_l2",
+        distance_metric="cosine",
+    )
+
+    assert graph.edge_feature_source == "diagnoses"
+    assert graph.embedding_normalization == "per_model_l2"
+    assert graph.distance_metric == "cosine"
 
 
 def test_every_config_field_has_a_generated_flag():

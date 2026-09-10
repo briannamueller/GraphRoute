@@ -9,6 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+import run_experiments
 from graphroute.config import GraphRouteConfig
 from graphroute.experiment import (
     build_model_pool,
@@ -102,6 +103,39 @@ def test_registry_reports_unknown_names():
         build_model_pool(
             cfg, torch.ones(4),
             {"linear": lambda sample, run: nn.Linear(sample.numel(), 2)})
+
+
+def test_experiment_runner_resolves_a_custom_feature_extractor(monkeypatch):
+    def extractor(inputs):
+        return inputs[:, :1]
+
+    monkeypatch.setitem(
+        run_experiments.FEATURE_EXTRACTORS, "selected", extractor)
+    cfg = GraphRouteConfig(
+        dataset="demo", graph={"edge_feature_source": "selected"})
+
+    assert run_experiments._feature_extractor(cfg) is extractor
+
+
+def test_experiment_runner_reports_an_unknown_feature_extractor():
+    cfg = GraphRouteConfig(
+        dataset="demo", graph={"edge_feature_source": "missing"})
+
+    with pytest.raises(ValueError, match="Unknown feature extractor 'missing'"):
+        run_experiments._feature_extractor(cfg)
+
+
+def test_experiment_runner_rejects_multiple_custom_feature_extractors():
+    cfg = GraphRouteConfig(
+        dataset="demo",
+        graph={
+            "node_feature_source": "clinical",
+            "edge_feature_source": "diagnoses",
+        },
+    )
+
+    with pytest.raises(ValueError, match="Only one custom feature extractor"):
+        run_experiments._feature_extractor(cfg)
 
 
 def test_experiment_identity_repeats_with_the_same_seed_and_models():

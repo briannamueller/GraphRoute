@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from graphroute.config import GraphRouteConfig
+from graphroute.features import BUILTIN_FEATURE_SOURCES
 from graphroute.graph import build_graph
 from graphroute.gnn import build_gnn
 from graphroute.losses import compute_meta_labels, compute_regression_meta_labels
@@ -50,8 +51,53 @@ def _labels(loader: DataLoader) -> torch.Tensor:
     return torch.cat([y for _, y in loader])
 
 
+def _flatten_input_batch(inputs) -> torch.Tensor:
+    """Flatten one batch, concatenating fields in their supplied order."""
+    if isinstance(inputs, torch.Tensor):
+        return inputs.flatten(1).float()
+    if isinstance(inputs, (tuple, list)):
+        if not inputs:
+            raise ValueError("Multi-input batches must contain at least one field.")
+        fields = []
+        batch_size = None
+        for field in inputs:
+            if not isinstance(field, torch.Tensor):
+                raise TypeError("Every multi-input field must be a tensor.")
+            flattened = field.flatten(1).float()
+            if batch_size is None:
+                batch_size = flattened.shape[0]
+            elif flattened.shape[0] != batch_size:
+                raise ValueError("Multi-input fields must share one batch dimension.")
+            fields.append(flattened)
+        return torch.cat(fields, dim=1)
+    raise TypeError("Model inputs must be a tensor or an ordered tuple of tensors.")
+
+
 def _inputs(loader: DataLoader) -> torch.Tensor:
-    return torch.cat([x for x, _ in loader]).flatten(1).float()
+    return torch.cat([_flatten_input_batch(x) for x, _ in loader])
+
+
+def _extracted_features(loader: DataLoader, feature_extractor: Callable) -> torch.Tensor:
+    batches = []
+    for inputs, labels in loader:
+        with torch.no_grad():
+            features = feature_extractor(inputs)
+        if not isinstance(features, torch.Tensor):
+            raise TypeError("feature_extractor must return a torch.Tensor.")
+        if features.ndim < 2 or features.shape[0] != len(labels):
+            raise ValueError(
+                "feature_extractor output must have shape [batch_size, ...].")
+        batches.append(features.detach().cpu().flatten(1).float())
+    return torch.cat(batches)
+
+
+def _custom_feature_source(sources: set[str]) -> str | None:
+    custom = sorted(sources - BUILTIN_FEATURE_SOURCES)
+    if len(custom) > 1:
+        raise ValueError(
+            "fit_graphroute accepts one custom feature source per run; got "
+            f"{custom}.")
+    return custom[0] if custom else None
 
 
 def build_features(
@@ -59,6 +105,10 @@ def build_features(
     pool_outputs: torch.Tensor,
     raw: Optional[torch.Tensor],
     embeddings: Optional[list[torch.Tensor]],
+    custom: Optional[torch.Tensor] = None,
+    *,
+    custom_source: str | None = None,
+    embedding_normalization: str = "none",
 ) -> torch.Tensor:
     """Build node or edge features from predictions, inputs, or embeddings.
 
@@ -87,6 +137,12 @@ def build_features(
     if source in ("embedding_concat", "embedding_mean"):
         if not embeddings:
             raise ValueError(f"{source} needs pool embeddings.")
+        if embedding_normalization == "per_model_l2":
+            embeddings = [torch.nn.functional.normalize(e.float(), dim=1)
+                          for e in embeddings]
+        elif embedding_normalization != "none":
+            raise ValueError(
+                f"Unknown embedding normalization {embedding_normalization!r}.")
         if source == "embedding_concat":
             return torch.cat(embeddings, dim=1)
         widths = {e.shape[1] for e in embeddings}
@@ -96,11 +152,13 @@ def build_features(
                 f"widths must match; this pool has {sorted(widths)}. Use "
                 f"embedding_concat for a heterogeneous pool.")
         return torch.stack(embeddings, dim=0).mean(dim=0)
+    if source == custom_source and custom is not None:
+        return custom
     raise ValueError(f"Unknown feature source {source!r}.")
 
 
 def _pool_outputs(cfg, pool, loader, device, calibrators, want_raw, want_emb,
-                  logits):
+                  want_custom, feature_extractor, logits):
     """Pool predictions and any additional requested representations.
 
     ``logits`` overrides the forward pass -- that is how out-of-fold predictions
@@ -116,7 +174,9 @@ def _pool_outputs(cfg, pool, loader, device, calibrators, want_raw, want_emb,
     raw = _inputs(loader) if want_raw else None
     emb = (collect_pool_embeddings(pool.load_models(device), loader, device)
            if want_emb else None)
-    return predictions, raw, emb
+    custom = (_extracted_features(loader, feature_extractor)
+              if want_custom else None)
+    return predictions, raw, emb, custom
 
 
 def _template_factories(models: list[torch.nn.Module]):
@@ -154,6 +214,7 @@ class GraphRouteModel:
     competence_scale: torch.Tensor | None
     device: torch.device
     collate_fn: Callable | None = None
+    feature_extractor: Callable | None = None
 
     def _dataset_parts(self, dataset: Dataset, split: str, *, cache_outputs: bool):
         loader = DataLoader(dataset, batch_size=256, shuffle=False,
@@ -161,6 +222,7 @@ class GraphRouteModel:
         labels = _labels(loader)
         g = self.cfg.graph
         sources = {g.node_feature_source, g.edge_feature_source}
+        custom_source = _custom_feature_source(sources)
         want_raw = bool(sources & {"feature_space", "hybrid"})
         want_emb = bool(sources & {"embedding_mean", "embedding_concat"})
         logits = _dataset_outputs(
@@ -168,9 +230,15 @@ class GraphRouteModel:
             task=self.cfg.task,
             cache_outputs=cache_outputs)
         values = _pool_outputs(self.cfg, self.pool, loader, self.device,
-                               self.calibrators, want_raw, want_emb, logits)
-        node = build_features(g.node_feature_source, *values)
-        edge = build_features(g.edge_feature_source, *values)
+                               self.calibrators, want_raw, want_emb,
+                               custom_source is not None, self.feature_extractor,
+                               logits)
+        feature_options = {
+            "custom_source": custom_source,
+            "embedding_normalization": g.embedding_normalization,
+        }
+        node = build_features(g.node_feature_source, *values, **feature_options)
+        edge = build_features(g.edge_feature_source, *values, **feature_options)
         ds = values[0].reshape(values[0].shape[0], -1)
         return labels, node, edge, ds
 
@@ -191,6 +259,7 @@ class GraphRouteModel:
             eval_features=node, eval_labels=labels, eval_ds=ds,
             eval_edge_features=edge, eval_meta=None, eval_type="test",
             k=g.k, neighbor_mode=g.neighbor_mode, weight_mode=g.weight_mode,
+            distance_metric=g.distance_metric,
             num_classes=self.cfg.num_classes,
             train_edge_features=self.train_edge_features, task=self.cfg.task,
             include_classifier_context=self.cfg.gnn.arch == "hetero_gat")
@@ -293,6 +362,7 @@ def fit_graphroute(
     cache_dir: Optional[str | Path] = None,
     pool: Optional[PoolArtifact] = None,
     collate_fn: Callable | None = None,
+    feature_extractor: Callable | None = None,
 ) -> GraphRouteModel:
     """Fit GraphRoute, training or reusing a pool when one is not supplied.
 
@@ -309,11 +379,17 @@ def fit_graphroute(
         collate_fn: Optional PyTorch batching function for structured samples. It
             must return ``(batch_inputs, batch_targets)``; ``batch_inputs`` must
             support ``.to(device)`` and be accepted by every model as one object.
+        feature_extractor: Callable applied to each input batch when either graph
+            feature source names a custom representation.
     """
     persistent_pool = cache_dir != ""
     resolved_cache_dir = Path("pool_cache") if cache_dir is None else Path(cache_dir)
     derived_val_ratio = cfg.val_ratio if validation_set is None else None
     sources = {cfg.graph.node_feature_source, cfg.graph.edge_feature_source}
+    custom_source = _custom_feature_source(sources)
+    if custom_source is not None and feature_extractor is None:
+        raise ValueError(
+            f"Feature source {custom_source!r} requires feature_extractor.")
 
     seed_everything(cfg.seed)
     device = resolve_device(cfg.device)
@@ -424,12 +500,20 @@ def fit_graphroute(
     want_emb = bool(sources & {"embedding_mean", "embedding_concat"})
     values = {
         "train": _pool_outputs(cfg, pool, meta_loader, device, calibrators,
-                               want_raw, want_emb, training_logits),
+                               want_raw, want_emb, custom_source is not None,
+                               feature_extractor, training_logits),
         "validation": _pool_outputs(cfg, pool, val_loader, device, calibrators,
-                                    want_raw, want_emb, validation_logits),
+                                    want_raw, want_emb, custom_source is not None,
+                                    feature_extractor, validation_logits),
     }
-    node = {k: build_features(g.node_feature_source, *v) for k, v in values.items()}
-    edge = {k: build_features(g.edge_feature_source, *v) for k, v in values.items()}
+    feature_options = {
+        "custom_source": custom_source,
+        "embedding_normalization": g.embedding_normalization,
+    }
+    node = {k: build_features(g.node_feature_source, *v, **feature_options)
+            for k, v in values.items()}
+    edge = {k: build_features(g.edge_feature_source, *v, **feature_options)
+            for k, v in values.items()}
     ds = {k: v[0].reshape(v[0].shape[0], -1) for k, v in values.items()}
 
     scale = None
@@ -456,6 +540,7 @@ def fit_graphroute(
         eval_ds=ds["validation"], eval_edge_features=edge["validation"],
         eval_meta=meta_val, eval_type="val", k=g.k,
         neighbor_mode=g.neighbor_mode, weight_mode=g.weight_mode,
+        distance_metric=g.distance_metric,
         num_classes=cfg.num_classes, train_edge_features=edge["train"], task=cfg.task,
         include_classifier_context=cfg.gnn.arch == "hetero_gat")
 
@@ -473,4 +558,5 @@ def fit_graphroute(
         train_node_features=node["train"], train_edge_features=edge["train"],
         train_decision_space=ds["train"], train_labels=labels["train"],
         train_meta_labels=meta_train, calibrators=calibrators,
-        competence_scale=scale, device=device, collate_fn=collate_fn)
+        competence_scale=scale, device=device, collate_fn=collate_fn,
+        feature_extractor=feature_extractor)

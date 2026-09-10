@@ -7,8 +7,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 Task = Literal["classification", "regression"]
-FeatureSource = Literal["decision_space", "feature_space", "embedding_mean",
-                        "embedding_concat", "hybrid"]
+FeatureSource = str
 
 
 class BaseConfig(BaseModel):
@@ -52,11 +51,21 @@ class GraphConfig(BaseModel):
 
     node_feature_source: FeatureSource = Field(
         default="decision_space",
+        min_length=1,
         description="Sample representation supplied to the GNN as node features.",
     )
     edge_feature_source: FeatureSource = Field(
         default="decision_space",
+        min_length=1,
         description="Sample representation used to measure similarity for graph edges.",
+    )
+    embedding_normalization: Literal["none", "per_model_l2"] = Field(
+        default="none",
+        description="Optional normalization applied to each pool-model embedding.",
+    )
+    distance_metric: Literal["manhattan", "cosine"] = Field(
+        default="manhattan",
+        description="Distance used to select graph neighbors.",
     )
     pool_calibrate: bool = Field(
         default=True,
@@ -140,15 +149,24 @@ class GNNConfig(BaseModel):
     )
 
 
-class GraphRouteConfig(BaseModel):
-    """Everything needed for one run."""
+class GraphRouteSettings(BaseModel):
+    """Modeling settings independent of a run's data and runtime context."""
     model_config = {"extra": "forbid"}
 
-    task: Task = "classification"
     loss_target: Literal["meta_labels", "ensemble"] = Field(
         default="meta_labels",
         description="Sets the GNN training objective.",
     )
+
+    base: BaseConfig = Field(default_factory=BaseConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
+    gnn: GNNConfig = Field(default_factory=GNNConfig)
+
+
+class GraphRouteConfig(GraphRouteSettings):
+    """Everything needed for one run."""
+
+    task: Task = "classification"
     dataset: str = Field(
         min_length=1,
         description="Dataset name used for data loading and persistent pool reuse.",
@@ -170,10 +188,6 @@ class GraphRouteConfig(BaseModel):
             "Fraction of training data used for validation when validation.pt is absent."
         ),
     )
-
-    base: BaseConfig = Field(default_factory=BaseConfig)
-    graph: GraphConfig = Field(default_factory=GraphConfig)
-    gnn: GNNConfig = Field(default_factory=GNNConfig)
 
     @model_validator(mode="after")
     def _regression_excludes_class_notions(self):

@@ -13,6 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from feature_extractors import FEATURE_EXTRACTORS
 from graphroute.data import load_datasets
 from graphroute.experiment import (
     build_model_pool,
@@ -23,6 +24,7 @@ from graphroute.experiment import (
     save_failure,
     save_result,
 )
+from graphroute.features import BUILTIN_FEATURE_SOURCES
 from graphroute.run import fit_graphroute, seed_everything
 from model_registry import MODEL_REGISTRY
 
@@ -42,6 +44,30 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _feature_extractor(cfg):
+    sources = {
+        cfg.graph.node_feature_source,
+        cfg.graph.edge_feature_source,
+    }
+    custom = sorted(sources - BUILTIN_FEATURE_SOURCES)
+    if not custom:
+        return None
+    if len(custom) > 1:
+        raise ValueError(
+            "Only one custom feature extractor may be used per run; got "
+            f"{custom}."
+        )
+
+    name = custom[0]
+    try:
+        return FEATURE_EXTRACTORS[name]
+    except KeyError as error:
+        available = ", ".join(sorted(FEATURE_EXTRACTORS)) or "none"
+        raise ValueError(
+            f"Unknown feature extractor {name!r}; registered names: {available}."
+        ) from error
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     configurations = load_experiments(args.config)
@@ -49,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     datasets = {}
     failures = 0
     for index, cfg in enumerate(configurations):
+        feature_extractor = _feature_extractor(cfg)
         data_key = (cfg.data_dir, cfg.dataset)
         if data_key not in datasets:
             datasets[data_key] = load_datasets(*data_key)
@@ -72,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                 train_set,
                 validation_set=validation_set,
                 models=models,
+                feature_extractor=feature_extractor,
             )
             metrics = trained.evaluate(test_set)
             save_result(

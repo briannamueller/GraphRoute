@@ -125,12 +125,23 @@ To use all of the training data to train both the base classifiers and the GNN w
         <code>"feature_space"</code>: original features (flattened if not tabular already).<br>
         <code>"embedding_mean"</code>: averages internal representation each model produces for the sample immediately before its final layer (requires same size embeddings).<br>
         <code>"embedding_concat"</code>: concatenates internal representation each model produces for the sample immediately before its final layer (embedding sizes may differ).<br>
-        <code>"hybrid"</code>: decision-space representation and original features concatenated.
+        <code>"hybrid"</code>: decision-space representation and original features concatenated.<br>
+        A custom feature representation.
       </td>
     </tr>
     <tr>
       <td><code>graph.edge_feature_source</code></td>
       <td>Selects the representation used to measure similarity when constructing graph edges.</td>
+    </tr>
+    <tr>
+      <td><code>graph.embedding_normalization</code></td>
+      <td>Controls whether each model's embedding is normalized before being combined.</td>
+      <td><code>"none"</code>, <code>"per_model_l2"</code></td>
+    </tr>
+    <tr>
+      <td><code>graph.distance_metric</code></td>
+      <td>Selects the distance used to identify neighboring samples.</td>
+      <td><code>"manhattan"</code>, <code>"cosine"</code></td>
     </tr>
     <tr>
       <td><code>graph.k</code></td>
@@ -159,6 +170,26 @@ To use all of the training data to train both the base classifiers and the GNN w
     </tr>
   </tbody>
 </table>
+
+`node_feature_source` and `edge_feature_source` may also name a custom feature
+representation. For repository experiments, define the extraction function in
+[`feature_extractors.py`](https://github.com/briannamueller/GraphRoute/blob/main/feature_extractors.py)
+and register it under the name used in the graph configuration. Each function
+receives a batch of model inputs and returns a feature tensor with one row per
+sample.
+
+```python
+def selected_columns(inputs):
+    return inputs[:, [0, 2, 4]]
+
+
+FEATURE_EXTRACTORS = {
+    "selected_columns": selected_columns,
+}
+```
+
+When calling `fit_graphroute(...)` directly, pass the function with
+`feature_extractor=selected_columns`.
 
 When oof_stacking is combined with embedding-based representations, GraphRoute uses out-of-fold predictions for GNN training, but extracts embeddings from the final base classifiers.
 

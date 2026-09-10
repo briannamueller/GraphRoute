@@ -8,9 +8,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 import torch
 
-from graphroute.run import build_features
+from graphroute.features import extract_feature_slice
+from graphroute.graph import build_cmdw_edges, build_knn_edges
+from graphroute.run import _inputs, build_features
 
 N, M, C, D = 10, 3, 4, 7
+
+
+def _middle_features(inputs):
+    return inputs[:, 1:3]
 
 
 @pytest.fixture
@@ -54,6 +60,115 @@ def test_embedding_mean_needs_matching_widths(parts):
         build_features("embedding_mean", probs, raw, [torch.randn(N, w) for w in (6, 9, 6)])
 
 
+def test_each_model_embedding_is_normalized_before_concatenation(parts):
+    probs, raw, _ = parts
+    embeddings = [torch.tensor([[3.0, 4.0]]).repeat(N, 1),
+                  torch.tensor([[0.0, 0.0, 12.0]]).repeat(N, 1)]
+
+    features = build_features(
+        "embedding_concat", probs, raw, embeddings,
+        embedding_normalization="per_model_l2",
+    )
+
+    assert torch.allclose(features[:, :2].norm(dim=1), torch.ones(N))
+    assert torch.allclose(features[:, 2:].norm(dim=1), torch.ones(N))
+
+
+def test_custom_feature_source_uses_supplied_features(parts):
+    probs, raw, emb = parts
+    custom = torch.randn(N, 3)
+    assert torch.equal(
+        build_features("diagnoses", probs, raw, emb, custom,
+                       custom_source="diagnoses"),
+        custom,
+    )
+
+
+def test_custom_feature_extractor_is_reused_for_prediction():
+    from torch.utils.data import TensorDataset
+
+    from graphroute.config import GraphRouteConfig
+    from graphroute.run import fit_graphroute
+
+    dataset = TensorDataset(torch.randn(32, 4), torch.arange(32) % 2)
+    extractor = _middle_features
+    cfg = GraphRouteConfig(
+        dataset="custom-features",
+        num_classes=2,
+        device="cpu",
+        base={"split_mode": "split_train", "epochs": 1, "batch_size": 8},
+        graph={
+            "node_feature_source": "clinical_features",
+            "edge_feature_source": "clinical_features",
+            "pool_calibrate": False,
+            "k": 2,
+        },
+        gnn={"arch": "mlp", "epochs": 1, "patience": 1},
+    )
+
+    fitted = fit_graphroute(
+        cfg,
+        dataset,
+        validation_set=dataset,
+        models=[torch.nn.Linear(4, 2)],
+        cache_dir="",
+        feature_extractor=extractor,
+    )
+    predicted = fitted.predict(dataset, cache_outputs=False)
+
+    assert fitted.train_node_features.shape[1] == 2
+    assert fitted.feature_extractor is extractor
+    assert predicted["predictions"].shape == (len(dataset),)
+
+
+def test_custom_feature_source_requires_an_extractor():
+    from torch.utils.data import TensorDataset
+
+    from graphroute.config import GraphRouteConfig
+    from graphroute.run import fit_graphroute
+
+    cfg = GraphRouteConfig(
+        dataset="custom-features",
+        num_classes=2,
+        graph={"edge_feature_source": "clinical_features"},
+    )
+    dataset = TensorDataset(torch.randn(8, 4), torch.arange(8) % 2)
+
+    with pytest.raises(ValueError, match="requires feature_extractor"):
+        fit_graphroute(cfg, dataset, cache_dir="")
+
+
+def test_feature_slice_selects_one_input_field():
+    inputs = (torch.randn(4, 3, 2), torch.arange(24).reshape(4, 6))
+    selected = extract_feature_slice(inputs, input_index=1, start=2, stop=5)
+    assert torch.equal(selected, inputs[1][:, 2:5])
+
+
+def test_cosine_and_manhattan_can_select_different_neighbors():
+    features = torch.tensor([
+        [1.0, 0.0],
+        [0.9, 0.1],
+        [10.0, 0.0],
+    ]).numpy()
+    labels = torch.zeros(3, dtype=torch.long).numpy()
+    sources = torch.tensor([1, 2]).numpy()
+    destinations = torch.tensor([0]).numpy()
+
+    manhattan, _ = build_knn_edges(
+        features, labels, sources, destinations, k=1,
+        weight_mode="uniform", distance_metric="manhattan")
+    cosine, _ = build_knn_edges(
+        features, labels, sources, destinations, k=1,
+        weight_mode="uniform", distance_metric="cosine")
+    cmdw, _ = build_cmdw_edges(
+        features, labels, sources, destinations, k=1,
+        neighbor_mode="class_balanced", distance_metric="cosine")
+
+    assert manhattan[0].tolist() == [1]
+    assert cosine[0].tolist() == [2]
+    assert cmdw[0].tolist() == [2]
+
+
 def test_missing_inputs_are_refused_not_guessed(parts):
     probs, _, emb = parts
     for src in ("feature_space", "hybrid"):
@@ -63,6 +178,18 @@ def test_missing_inputs_are_refused_not_guessed(parts):
         build_features("embedding_mean", probs, None, None)
     with pytest.raises(ValueError, match="Unknown feature source"):
         build_features("nonsense", probs, None, None)
+
+
+def test_feature_space_flattens_and_concatenates_multi_input_fields():
+    ts = torch.arange(2 * 3 * 4).reshape(2, 3, 4)
+    static = torch.arange(2 * 5).reshape(2, 5) + 100
+    loader = [((ts, static), torch.tensor([0, 1]))]
+
+    raw = _inputs(loader)
+
+    assert raw.shape == (2, 17)
+    assert torch.equal(raw[:, :12], ts.flatten(1).float())
+    assert torch.equal(raw[:, 12:], static.float())
 
 
 def test_binary_loss_is_bce_on_the_positive_logit():

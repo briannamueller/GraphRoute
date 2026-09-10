@@ -9,6 +9,26 @@ from torch_geometric.data import HeteroData
 from torch_geometric.utils import to_undirected
 
 
+def _distances(
+    query: np.ndarray,
+    candidates: np.ndarray,
+    metric: str,
+    eps: float,
+) -> np.ndarray:
+    if metric == "manhattan":
+        return np.sum(np.abs(candidates - query), axis=-1)
+    if metric == "cosine":
+        denominator = np.linalg.norm(candidates, axis=-1) * np.linalg.norm(query)
+        similarity = np.divide(
+            candidates @ query,
+            denominator,
+            out=np.zeros_like(denominator, dtype=np.float64),
+            where=denominator > eps,
+        )
+        return np.clip(1.0 - similarity, 0.0, 2.0)
+    raise ValueError(f"Unknown distance metric {metric!r}.")
+
+
 # ── KNN Edge Building ──────────────────────────────────────────────────
 
 def build_knn_edges(
@@ -19,6 +39,7 @@ def build_knn_edges(
     k: int = 5,
     neighbor_mode: str = "knn",
     weight_mode: str = "softmax",
+    distance_metric: str = "manhattan",
     num_classes: int | None = None,
     eps: float = 1e-8,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -32,6 +53,7 @@ def build_knn_edges(
         k: Number of nearest neighbors (total for knn, per-class for class_balanced).
         neighbor_mode: "knn" (global top-k) or "class_balanced" (k per class).
         weight_mode: "uniform", "inverse_distance", or "softmax".
+        distance_metric: "manhattan" or "cosine".
         num_classes: Number of classes for class-balanced selection.
         eps: Small constant for numerical stability.
 
@@ -47,9 +69,6 @@ def build_knn_edges(
     if neighbor_mode == "class_balanced" and num_classes is None:
         num_classes = len(classes)
 
-    def _l1_dist(idx_a, idx_b):
-        return np.sum(np.abs(features[idx_b] - features[idx_a]), axis=-1)
-
     def _select_class_balanced(j):
         sources_by_class = {c: src_ids[src_labels == c] for c in classes}
         all_neigh, all_dist = [], []
@@ -59,7 +78,7 @@ def build_knn_edges(
                 S_c = S_c[S_c != j]
             if S_c.size == 0:
                 continue
-            d = _l1_dist(j, S_c)
+            d = _distances(features[j], features[S_c], distance_metric, eps)
             k_c = min(k, S_c.size)
             idx = np.argpartition(d, k_c - 1)[:k_c]
             all_neigh.append(S_c[idx])
@@ -72,7 +91,7 @@ def build_knn_edges(
         pool = src_ids[src_ids != j]
         if pool.size == 0:
             return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
-        d = _l1_dist(j, pool)
+        d = _distances(features[j], features[pool], distance_metric, eps)
         k_eff = min(k, pool.size)
         idx = np.argpartition(d, k_eff - 1)[:k_eff]
         return pool[idx], d[idx]
@@ -132,6 +151,7 @@ def build_cmdw_edges(
     num_classes: int | None = None,
     membership_mode: str = "soft",
     membership_k: int = 7,
+    distance_metric: str = "manhattan",
     eps: float = 1e-8,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Build CMDW (Class-Membership Distance-Weighted) edges.
@@ -149,6 +169,7 @@ def build_cmdw_edges(
         num_classes: Number of classes.
         membership_mode: "none", "hard", or "soft".
         membership_k: K for membership computation.
+        distance_metric: "manhattan" or "cosine".
         eps: Numerical stability constant.
 
     Returns:
@@ -175,7 +196,7 @@ def build_cmdw_edges(
         if pool.size == 0:
             mem_cache[i] = 1.0
             return 1.0
-        d = np.sum(np.abs(features[pool] - xi), axis=1)
+        d = _distances(xi, features[pool], distance_metric, eps)
         mk = min(membership_k, pool.size)
         nn = pool[np.argpartition(d, mk - 1)[:mk]] if mk > 0 else np.empty(0, dtype=np.int64)
         prop_same = float(np.mean(labels[nn] == labels[i])) if nn.size else 1.0
@@ -192,7 +213,7 @@ def build_cmdw_edges(
                 S_c = S_c[S_c != j]
             if S_c.size == 0:
                 continue
-            d = np.sum(np.abs(features[S_c] - q), axis=1)
+            d = _distances(q, features[S_c], distance_metric, eps)
             k_c = min(k, S_c.size)
             idx = np.argpartition(d, k_c - 1)[:k_c]
             per_class_n[c] = S_c[idx]
@@ -203,7 +224,7 @@ def build_cmdw_edges(
         pool = src_ids[src_ids != j]
         if pool.size == 0:
             return {}, {}
-        d_all = np.sum(np.abs(features[pool] - q), axis=1)
+        d_all = _distances(q, features[pool], distance_metric, eps)
         k_eff = min(k, pool.size)
         idx = np.argpartition(d_all, k_eff - 1)[:k_eff]
         neigh_ids = pool[idx]
@@ -273,6 +294,7 @@ def build_edges(
     k: int = 5,
     neighbor_mode: str = "knn",
     weight_mode: str = "softmax",
+    distance_metric: str = "manhattan",
     num_classes: int | None = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Build sample-sample edges, dispatching to KNN or CMDW builder.
@@ -285,6 +307,7 @@ def build_edges(
         k: Number of neighbors.
         neighbor_mode: "knn" or "class_balanced".
         weight_mode: "uniform", "inverse_distance", "softmax", or "cmdw".
+        distance_metric: "manhattan" or "cosine".
         num_classes: Number of classes.
 
     Returns:
@@ -297,11 +320,12 @@ def build_edges(
         return build_cmdw_edges(
             features, labels, source_indices, destination_indices,
             k=k, neighbor_mode=neighbor_mode, num_classes=num_classes,
+            distance_metric=distance_metric,
         )
     return build_knn_edges(
         features, labels, source_indices, destination_indices,
         k=k, neighbor_mode=neighbor_mode, weight_mode=weight_mode,
-        num_classes=num_classes,
+        distance_metric=distance_metric, num_classes=num_classes,
     )
 
 
@@ -361,6 +385,7 @@ def build_graph(
     k: int = 5,
     neighbor_mode: str = "knn",
     weight_mode: str = "softmax",
+    distance_metric: str = "manhattan",
     num_classes: int | None = None,
     eval_meta: torch.Tensor | None = None,
     train_edge_features: np.ndarray | None = None,
@@ -389,6 +414,7 @@ def build_graph(
         k: Number of nearest neighbors.
         neighbor_mode: "knn" or "class_balanced".
         weight_mode: "uniform", "inverse_distance", "softmax", or "cmdw".
+        distance_metric: "manhattan" or "cosine".
         num_classes: Number of classes (classification only).
         train_edge_features: Features for edge distance [N_train, D']. Defaults
             to the decision space when not given. Which representation these
@@ -465,7 +491,7 @@ def build_graph(
     edge_index_np, edge_attr_np = build_edges(
         edge_feats, combined_labels, n_train, n_total,
         k=k, neighbor_mode=neighbor_mode, weight_mode=weight_mode,
-        num_classes=num_classes,
+        distance_metric=distance_metric, num_classes=num_classes,
     )
 
     # Assemble HeteroData
