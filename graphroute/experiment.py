@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import inspect
 import itertools
 import json
 import os
@@ -136,11 +137,36 @@ def build_model_pool(
     return models
 
 
-def experiment_id(cfg: GraphRouteConfig, models: list[nn.Module]) -> str:
-    """Identify a resolved configuration and its initialized model pool."""
+def _feature_extractor_identity(feature_extractor: Callable | None) -> dict | None:
+    if feature_extractor is None:
+        return None
+    if not callable(feature_extractor):
+        raise TypeError("The feature extractor registry value must be callable.")
+    try:
+        source = inspect.getsource(feature_extractor)
+    except (OSError, TypeError) as error:
+        raise ValueError(
+            "Cannot identify the custom feature extractor from its source. "
+            "Define it as a named function in a Python module."
+        ) from error
+    return {
+        "module": getattr(feature_extractor, "__module__", None),
+        "qualname": getattr(feature_extractor, "__qualname__", None),
+        "source": hashlib.sha256(source.encode()).hexdigest(),
+    }
+
+
+def experiment_id(
+    cfg: GraphRouteConfig,
+    models: list[nn.Module],
+    *,
+    feature_extractor: Callable | None = None,
+) -> str:
+    """Identify a resolved configuration and its executable inputs."""
     payload = {
         "configuration": cfg.model_dump(mode="json"),
         "models": automatic_model_ids(models),
+        "feature_extractor": _feature_extractor_identity(feature_extractor),
         "graphroute": _graphroute_version(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

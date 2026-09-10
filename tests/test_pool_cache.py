@@ -328,14 +328,7 @@ def test_output_transform_is_applied_before_publication(tmp_path):
 
 
 def test_repairing_an_incomplete_cache_is_never_half_visible(tmp_path, monkeypatch):
-    """A reader must not get old models carrying the new fold logits.
-
-    The window: a directory holds models from an earlier pool but no logits, so
-    an oof_stacking run misses, retrains and republishes. ``save_pool`` writes
-    the logits first, then the models one by one -- and between those two steps
-    every file a reader looks for exists, while half of them belong to the pool
-    that was just discarded. The writer is paused exactly there.
-    """
+    """Readers cannot observe files from two generations of a repaired cache."""
     import threading
     import time
 

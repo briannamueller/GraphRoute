@@ -250,8 +250,7 @@ def test_fallback_modes(mode, expected):
 
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="no accelerator")
 def test_fallback_runs_off_cpu():
-    """These accumulators were allocated on CPU, so they raised as soon as the
-    graph was anywhere else."""
+    """Fallback computations keep their outputs on the graph device."""
     from graphroute.training import FallbackModel, _neighborhood_gain
     dev = torch.device("mps")
     d, mask = _tiny_graph(dev)
@@ -290,8 +289,7 @@ def test_oof_predictions_and_final_model_embeddings_are_separate_channels(source
 ])
 @pytest.mark.parametrize("mode", ["none", "class_prevalence", "difficulty"])
 def test_every_sample_weight_mode_runs(mode, task, labels, ds, num_classes):
-    """class_prevalence referenced an undefined name and raised before the GNN
-    ever trained. Nothing exercised the modes, so it was invisible."""
+    """Every applicable weighting mode returns finite sample weights."""
     from graphroute.training import compute_sample_weights
     w = compute_sample_weights(mode, labels, ds, num_classes, task=task)
     if mode == "none" or (mode == "class_prevalence" and task == "regression"):

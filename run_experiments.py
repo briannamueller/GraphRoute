@@ -60,12 +60,15 @@ def _feature_extractor(cfg):
 
     name = custom[0]
     try:
-        return FEATURE_EXTRACTORS[name]
+        extractor = FEATURE_EXTRACTORS[name]
     except KeyError as error:
         available = ", ".join(sorted(FEATURE_EXTRACTORS)) or "none"
         raise ValueError(
             f"Unknown feature extractor {name!r}; registered names: {available}."
         ) from error
+    if not callable(extractor):
+        raise TypeError(f"Feature extractor {name!r} must be callable.")
+    return extractor
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         # The initialized model pool is part of both the cache and run identity.
         seed_everything(cfg.seed)
         models = build_model_pool(cfg, train_set[0][0], MODEL_REGISTRY)
-        run_id = experiment_id(cfg, models)
+        run_id = experiment_id(
+            cfg, models, feature_extractor=feature_extractor)
         destination = result_path(args.results_dir, cfg, run_id)
         label = f"[{index + 1}/{len(configurations)}] {run_id}"
 

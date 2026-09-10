@@ -138,6 +138,16 @@ def test_experiment_runner_rejects_multiple_custom_feature_extractors():
         run_experiments._feature_extractor(cfg)
 
 
+def test_experiment_runner_requires_a_callable_feature_extractor(monkeypatch):
+    monkeypatch.setitem(
+        run_experiments.FEATURE_EXTRACTORS, "selected", "not callable")
+    cfg = GraphRouteConfig(
+        dataset="demo", graph={"edge_feature_source": "selected"})
+
+    with pytest.raises(TypeError, match="must be callable"):
+        run_experiments._feature_extractor(cfg)
+
+
 def test_experiment_identity_repeats_with_the_same_seed_and_models():
     cfg = GraphRouteConfig(
         dataset="demo", num_classes=2,
@@ -151,6 +161,26 @@ def test_experiment_identity_repeats_with_the_same_seed_and_models():
     assert experiment_id(cfg, first) == experiment_id(cfg, second)
     changed = cfg.model_copy(update={"seed": 1})
     assert experiment_id(cfg, first) != experiment_id(changed, first)
+
+
+def test_experiment_identity_includes_the_custom_feature_extractor():
+    cfg = GraphRouteConfig(
+        dataset="demo", num_classes=2,
+        base={"models": ["linear"]},
+        graph={"edge_feature_source": "selected"},
+    )
+    models = [nn.Linear(4, 2)]
+
+    def first(inputs):
+        return inputs[:, :1]
+
+    def second(inputs):
+        return inputs[:, -1:]
+
+    first_id = experiment_id(cfg, models, feature_extractor=first)
+    second_id = experiment_id(cfg, models, feature_extractor=second)
+
+    assert first_id != second_id
 
 
 def test_completed_and_failed_results_have_resume_semantics(tmp_path, monkeypatch):

@@ -143,8 +143,7 @@ def test_invalid_values_are_refused():
 
 
 def test_pair_feat_dim_matches_what_the_head_will_receive():
-    """The head's first Linear is sized from this, so a wrong width is a shape
-    error at the first forward -- it was hardcoded to 0 regardless of config."""
+    """The derived width matches the features consumed by the output head."""
     cfg = GraphRouteConfig(dataset="test", num_classes=5,
                            gnn={"output_head": "concat_mlp",
                                                "pair_confidence": True,
@@ -160,8 +159,7 @@ def test_pair_only_without_pair_features_is_refused():
 
 
 def test_every_architecture_can_be_constructed():
-    """gnn_kwargs sent every setting to every architecture, so two of the three
-    raised TypeError on unexpected keyword arguments."""
+    """Every supported architecture accepts its derived keyword arguments."""
     from graphroute.gnn import build_gnn
     for arch in ("gat", "hetero_gat", "graph_gps", "mlp"):
         cfg = GraphRouteConfig(dataset="test", gnn={"arch": arch})
