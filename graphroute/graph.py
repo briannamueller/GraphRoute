@@ -435,7 +435,7 @@ def build_graph(
         if x is None:
             return None
         if isinstance(x, torch.Tensor):
-            return x.numpy()
+            return x.detach().cpu().numpy()
         return np.asarray(x)
 
     def _to_tensor(x, dtype=torch.float):
@@ -463,11 +463,19 @@ def build_graph(
         combined_ds = torch.cat([train_ds, eval_ds], dim=0)
 
         if eval_meta is None:
-            eval_meta = torch.zeros(n_eval, M)
+            eval_meta = torch.zeros(
+                n_eval,
+                M,
+                dtype=train_meta.dtype,
+                device=train_meta.device,
+            )
         elif eval_meta.shape != (n_eval, M):
             raise ValueError(
                 f"eval_meta must be [{n_eval}, {M}], got {tuple(eval_meta.shape)}")
-        combined_meta = torch.cat([train_meta, eval_meta.float()], dim=0)
+        combined_meta = torch.cat([
+            train_meta,
+            eval_meta.to(device=train_meta.device, dtype=train_meta.dtype),
+        ], dim=0)
     else:
         n_total = n_train
         combined_features = train_features_np

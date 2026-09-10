@@ -47,6 +47,55 @@ def _graph(eval_indices: torch.Tensor, *, hetero: bool = False):
     return data
 
 
+def test_graph_build_detaches_tensor_features_before_numpy_conversion():
+    """Graph construction accepts tensors that still track gradients."""
+    train_features = TRAIN_FEATURES.clone().requires_grad_()
+    eval_features = EVAL_FEATURES[:2].clone().requires_grad_()
+    data, _ = build_graph(
+        train_features,
+        TRAIN_LABELS,
+        TRAIN_DS,
+        TRAIN_META,
+        eval_features=eval_features,
+        eval_labels=torch.zeros(2, dtype=torch.long),
+        eval_ds=EVAL_DS[:2],
+        train_edge_features=train_features,
+        eval_edge_features=eval_features,
+        k=2,
+        neighbor_mode="knn",
+        weight_mode="uniform",
+        num_classes=NUM_CLASSES,
+        eval_type="test",
+    )
+
+    assert data["sample"].x.shape == (len(TRAIN_FEATURES) + 2, FEATURE_DIM)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_graph_build_accepts_cuda_node_and_edge_features():
+    """GPU inference may pass CUDA tensors into CPU-based graph construction."""
+    device = torch.device("cuda")
+    data, _ = build_graph(
+        TRAIN_FEATURES.to(device),
+        TRAIN_LABELS.to(device),
+        TRAIN_DS.to(device),
+        TRAIN_META.to(device),
+        eval_features=EVAL_FEATURES[:2].to(device),
+        eval_labels=torch.zeros(2, dtype=torch.long, device=device),
+        eval_ds=EVAL_DS[:2].to(device),
+        train_edge_features=TRAIN_FEATURES.to(device),
+        eval_edge_features=EVAL_FEATURES[:2].to(device),
+        k=2,
+        neighbor_mode="knn",
+        weight_mode="uniform",
+        num_classes=NUM_CLASSES,
+        eval_type="test",
+    )
+
+    assert data["sample"].x.device.type == "cpu"
+    assert data["sample"].x.shape == (len(TRAIN_FEATURES) + 2, FEATURE_DIM)
+
+
 def _model(arch: str):
     common = dict(
         input_dim=FEATURE_DIM,
