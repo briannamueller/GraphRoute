@@ -487,8 +487,10 @@ def evaluate_test(
 
     # Apply fallback for samples with no classifier selected
     if fallback_model is not None:
-        sel_sum = F.relu(test_logits).sum(dim=1)
-        fb_mask = sel_sum == 0
+        _, fb_mask = compute_selection_matrix(
+            test_logits, args.gnn_ens_combination_mode,
+            args.gnn_voting_weight_space,
+        )
         if fb_mask.any():
             fb_scores = fallback_model(data, test_mask)
             test_logits[fb_mask] = fb_scores[fb_mask].to(device)

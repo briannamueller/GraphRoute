@@ -72,8 +72,10 @@ def test_every_config_field_has_a_generated_flag():
 
 def test_flags_actually_reach_the_config():
     cfg = config_from_args(["--dataset", "test", "--graph-k", "9", "--gnn-hidden-dim", "256",
-                            "--base-epochs", "7", "--gnn-arch", "mlp"])
+                            "--base-epochs", "7", "--gnn-arch", "mlp",
+                            "--gnn-voting-weight-space", "dense"])
     assert (cfg.graph.k, cfg.gnn.hidden_dim, cfg.base.epochs, cfg.gnn.arch) == (9, 256, 7, "mlp")
+    assert cfg.gnn.voting_weight_space == "dense"
 
 
 def test_unset_flags_keep_config_defaults():
@@ -131,6 +133,9 @@ def test_voting_space_follows_the_loss_target():
     explicit = GraphRouteConfig(dataset="test", loss_target="ensemble",
                                 gnn={"voting_weight_space": "logit"})
     assert explicit.resolved_voting_weight_space() == "logit"   # explicit wins
+    dense = GraphRouteConfig(dataset="test", loss_target="ensemble",
+                             gnn={"voting_weight_space": "dense"})
+    assert dense.resolved_voting_weight_space() == "dense"
 
 
 def test_invalid_values_are_refused():

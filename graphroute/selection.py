@@ -22,7 +22,8 @@ def evaluate_ensemble(
         num_classes: Number of classes C.
         combination_mode: One of soft_weighted_voting, hard_weighted_voting,
             soft_voting, hard_voting.
-        voting_weight_space: "logit" or "sig".
+        voting_weight_space: "logit", thresholded "sig", or unthresholded
+            sigmoid "dense".
         hard_preds: Hard predictions [N, M] (required for hard voting modes).
         threshold: Optional sigmoid threshold override for selection.
 
@@ -37,7 +38,9 @@ def evaluate_ensemble(
         sig = torch.sigmoid(logits)
         raw_weights = torch.where(sig > threshold, sig, torch.zeros_like(sig))
     elif "weighted" in combination_mode:
-        if voting_weight_space == "sig":
+        if voting_weight_space == "dense":
+            raw_weights = torch.sigmoid(logits)
+        elif voting_weight_space == "sig":
             sig = torch.sigmoid(logits)
             raw_weights = torch.where(sig > 0.5, sig, torch.zeros_like(sig))
         else:  # "logit" (default)
@@ -75,7 +78,8 @@ def evaluate_ensemble_regression(
     Args:
         logits: GNN output logits [N, M].
         predictions: Regressor predictions [N, M].
-        voting_weight_space: "logit" or "sig".
+        voting_weight_space: "logit", thresholded "sig", or unthresholded
+            sigmoid "dense".
         threshold: Optional sigmoid threshold override.
 
     Returns:
@@ -84,6 +88,8 @@ def evaluate_ensemble_regression(
     if threshold is not None:
         sig = torch.sigmoid(logits)
         raw_weights = torch.where(sig > threshold, sig, torch.zeros_like(sig))
+    elif voting_weight_space == "dense":
+        raw_weights = torch.sigmoid(logits)
     elif voting_weight_space == "sig":
         sig = torch.sigmoid(logits)
         raw_weights = torch.where(sig > 0.5, sig, torch.zeros_like(sig))
@@ -110,7 +116,8 @@ def compute_selection_matrix(
     Args:
         logits: GNN output logits [N, M].
         combination_mode: Aggregation mode string.
-        voting_weight_space: "logit" or "sig".
+        voting_weight_space: "logit", thresholded "sig", or unthresholded
+            sigmoid "dense".
         threshold: Optional sigmoid threshold override.
 
     Returns:
@@ -120,7 +127,9 @@ def compute_selection_matrix(
         sig = torch.sigmoid(logits)
         selection_matrix = torch.where(sig > threshold, sig, torch.zeros_like(sig))
     elif "weighted" in combination_mode:
-        if voting_weight_space == "sig":
+        if voting_weight_space == "dense":
+            selection_matrix = torch.sigmoid(logits)
+        elif voting_weight_space == "sig":
             sig = torch.sigmoid(logits)
             selection_matrix = torch.where(sig > 0.5, sig, torch.zeros_like(sig))
         else:  # "logit"

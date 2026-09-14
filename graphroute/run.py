@@ -280,7 +280,9 @@ class GraphRouteModel:
         if self.cfg.gnn.fallback != "uniform":
             fallback = FallbackModel(self.cfg.gnn.fallback,
                                      self.train_meta_labels, self.train_labels)
-            missing = torch.relu(scores).sum(dim=1) == 0
+            _, missing = compute_selection_matrix(
+                scores, args.gnn_ens_combination_mode,
+                args.gnn_voting_weight_space)
             if missing.any():
                 replacement = fallback(data, eval_mask)
                 scores[missing] = replacement[missing].to(self.device)

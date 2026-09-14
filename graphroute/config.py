@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Task = Literal["classification", "regression"]
 FeatureSource = str
@@ -136,11 +136,12 @@ class GNNConfig(BaseModel):
         default="soft_weighted_voting",
         description="Determines how model scores form the combined prediction.",
     )
-    voting_weight_space: Optional[Literal["logit", "sig"]] = Field(
+    voting_weight_space: Optional[Literal["logit", "sig", "dense"]] = Field(
         default=None,
         description=(
             "Transforms GNN scores into voting weights; when omitted, GraphRoute "
-            "chooses based on loss_target."
+            "chooses based on loss_target. 'dense' uses every sigmoid-transformed "
+            "score without thresholding."
         ),
     )
     fallback: Literal["uniform", "wacc", "acc", "bacc"] = Field(
@@ -261,9 +262,8 @@ class GraphRouteConfig(GraphRouteSettings):
 
     def resolved_voting_weight_space(self) -> str:
         """Ensemble-mode training weights pool members by sigmoid(logits), so
-        scoring in "sig" space applies the same function at inference. "logit"
-        (relu) is a different, unbounded one that over-weights confident
-        pool members relative to what was optimised."""
+        scoring in "dense" space exactly preserves those unthresholded weights.
+        "sig" additionally thresholds them at 0.5, while "logit" uses relu."""
         if self.gnn.voting_weight_space is not None:
             return self.gnn.voting_weight_space
         return "sig" if self.loss_target == "ensemble" else "logit"
@@ -340,3 +340,62 @@ class GraphRouteConfig(GraphRouteSettings):
              "graph_gps": "SampleGraphGPS", "mlp": "SampleMLP"}[g.arch]]
         accepted = set(inspect.signature(cls.__init__).parameters)
         return {k: v for k, v in candidate.items() if k in accepted}
+
+
+SweepValues = Annotated[list[Any], Field(min_length=1)]
+
+
+class GraphRouteExperimentConfig(BaseModel):
+    """A GraphRoute run configuration with an optional Cartesian sweep."""
+
+    model_config = {"extra": "allow"}
+
+    sweep: dict[str, SweepValues] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_configuration_fields(cls, value):
+        if not isinstance(value, dict):
+            return value
+        unknown = sorted(set(value) - set(GraphRouteConfig.model_fields) - {"sweep"})
+        if unknown:
+            raise ValueError(
+                "Unknown experiment setting(s): " + ", ".join(unknown)
+            )
+        return value
+
+    @field_validator("sweep", mode="before")
+    @classmethod
+    def _none_means_no_sweep(cls, value):
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            for path, choices in value.items():
+                if not isinstance(choices, list) or not choices:
+                    raise ValueError(
+                        f"Sweep parameter {path!r} must contain a nonempty list "
+                        "of values."
+                    )
+        return value
+
+    @field_validator("sweep")
+    @classmethod
+    def _validate_sweep_paths(cls, sweep):
+        for path in sweep:
+            if not cls.supports_sweep_path(path):
+                raise ValueError(
+                    f"Unknown sweep parameter {path!r}; use a GraphRouteConfig "
+                    "field or a dotted nested field such as 'graph.k'."
+                )
+        return sweep
+
+    @classmethod
+    def supports_sweep_path(cls, path: str) -> bool:
+        groups = {"base": BaseConfig, "graph": GraphConfig, "gnn": GNNConfig}
+        parts = path.split(".")
+        if len(parts) == 1:
+            return parts[0] in GraphRouteConfig.model_fields and parts[0] not in groups
+        if len(parts) == 2:
+            group, field = parts
+            return group in groups and field in groups[group].model_fields
+        return False

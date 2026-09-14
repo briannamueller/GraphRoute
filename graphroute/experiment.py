@@ -20,7 +20,7 @@ import torch.nn as nn
 import yaml
 from pydantic import ValidationError
 
-from graphroute.config import BaseConfig, GNNConfig, GraphConfig, GraphRouteConfig
+from graphroute.config import GraphRouteConfig, GraphRouteExperimentConfig
 from graphroute.pool_cache import automatic_model_ids, safe_component
 
 ModelFactory = Callable[[Any, GraphRouteConfig], nn.Module]
@@ -35,16 +35,7 @@ def _graphroute_version() -> str:
 
 
 def _known_sweep_path(path: str) -> bool:
-    parts = path.split(".")
-    if len(parts) == 1:
-        return parts[0] in GraphRouteConfig.model_fields and parts[0] not in {
-            "base", "graph", "gnn"
-        }
-    if len(parts) != 2:
-        return False
-    group, field = parts
-    groups = {"base": BaseConfig, "graph": GraphConfig, "gnn": GNNConfig}
-    return group in groups and field in groups[group].model_fields
+    return GraphRouteExperimentConfig.supports_sweep_path(path)
 
 
 def _set_sweep_value(values: dict, path: str, value: Any) -> None:
@@ -66,26 +57,14 @@ def _set_sweep_value(values: dict, path: str, value: Any) -> None:
 
 def expand_experiments(specification: Mapping[str, Any]) -> list[GraphRouteConfig]:
     """Expand a base configuration and dotted-path grid into validated runs."""
-    if not isinstance(specification, Mapping):
-        raise TypeError("The experiment configuration must be a mapping.")
-    base = copy.deepcopy(dict(specification))
-    sweep = base.pop("sweep", {})
-    if sweep is None:
-        sweep = {}
-    if not isinstance(sweep, Mapping):
-        raise TypeError("The 'sweep' entry must be a mapping of fields to lists.")
-
+    try:
+        parsed = GraphRouteExperimentConfig.model_validate(specification)
+    except ValidationError as error:
+        raise ValueError(f"Invalid experiment configuration: {error}") from error
+    base = parsed.model_dump(exclude={"sweep"})
+    sweep = parsed.sweep
     paths = sorted(sweep)
-    choices = []
-    for path in paths:
-        values = sweep[path]
-        if not isinstance(values, list) or not values:
-            raise ValueError(
-                f"Sweep parameter {path!r} must contain a nonempty list of values."
-            )
-        if not _known_sweep_path(path):
-            _set_sweep_value({}, path, values[0])
-        choices.append(values)
+    choices = [sweep[path] for path in paths]
 
     combinations = itertools.product(*choices) if choices else [()]
     resolved = []

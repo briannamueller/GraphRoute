@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 import run_experiments
-from graphroute.config import GraphRouteConfig
+from graphroute.config import GraphRouteConfig, GraphRouteExperimentConfig
 from graphroute.experiment import (
     build_model_pool,
     expand_experiments,
@@ -53,6 +53,29 @@ def test_yaml_loads_the_same_validated_sweep(tmp_path):
     )
 
     assert [cfg.graph.k for cfg in load_experiments(path)] == [2, 4]
+
+
+def test_experiment_wrapper_is_a_pydantic_configuration():
+    specification = GraphRouteExperimentConfig.model_validate(_specification())
+
+    assert specification.sweep == {"seed": [0, 1], "graph.k": [3, 7]}
+
+
+def test_required_dataset_can_be_supplied_by_the_sweep():
+    configurations = expand_experiments({"sweep": {"dataset": ["a", "b"]}})
+
+    assert [configuration.dataset for configuration in configurations] == ["a", "b"]
+
+
+def test_sweep_values_are_validated_after_they_replace_the_base_value():
+    configurations = expand_experiments({
+        "dataset": "demo",
+        "task": "regression",
+        "sweep": {"task": ["classification"]},
+    })
+
+    assert configurations[0].task == "classification"
+    assert configurations[0].num_classes == 10
 
 
 def test_shipped_configuration_defines_one_experiment():

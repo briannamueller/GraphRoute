@@ -200,7 +200,7 @@ When oof_stacking is combined with embedding-based representations, GraphRoute u
 | `gnn.arch` | Selects the architecture used to learn the dynamic selection rule. | `"gat"`, `"hetero_gat"`, `"graph_gps"`, `"mlp"` |
 | `gnn.loss` | Selects the GNN training loss. | `"bce"`, `"focal_bce"`, `"soft_bce"`, `"regression"` |
 | `gnn.ens_combination_mode` | Determines how model scores form the final prediction. | `"soft_weighted_voting"`, `"hard_weighted_voting"`, `"soft_voting"`, `"hard_voting"`, `"weighted_mean"` for regression |
-| `gnn.voting_weight_space` | Selects how GNN scores become voting weights; when omitted, GraphRoute chooses based on `loss_target`. | `None`, `"logit"`, `"sig"` |
+| `gnn.voting_weight_space` | Selects how GNN scores become voting weights; `"dense"` uses every sigmoid-transformed score without thresholding. When omitted, GraphRoute chooses based on `loss_target`. | `None`, `"logit"`, `"sig"`, `"dense"` |
 | `gnn.fallback` | Selects the fallback rule when no model receives a positive selection weight. | `"uniform"`, `"wacc"`, `"acc"`, `"bacc"` |
 
 `hetero_gat` adds learned classifier nodes and separate copies of the training
