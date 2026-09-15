@@ -35,14 +35,24 @@ class BaseConfig(BaseModel):
         ge=2,
         description="Number of folds used when split_mode is oof_stacking.",
     )
-    es_metric: Literal["val_loss", "val_acc", "val_bacc"] = "val_loss"
-    es_patience: int = Field(20, ge=1)
-    lr: float = Field(5e-4, gt=0)
-    optimizer: Literal["SGD", "Adam"] = "Adam"
-    weight_decay: float = Field(5e-4, ge=0)
-    weighted_by_class: bool = True
-    epochs: int = Field(300, ge=1)
-    batch_size: int = Field(10, ge=1)
+    es_metric: Literal["val_loss", "val_acc", "val_bacc"] = Field(
+        "val_loss", description="Validation metric used to select checkpoints."
+    )
+    es_patience: int = Field(
+        20, ge=1, description="Epochs without improvement before stopping."
+    )
+    lr: float = Field(5e-4, gt=0, description="Optimizer learning rate.")
+    optimizer: Literal["SGD", "Adam"] = Field(
+        "Adam", description="Optimizer used to train base models."
+    )
+    weight_decay: float = Field(
+        5e-4, ge=0, description="Optimizer weight decay."
+    )
+    weighted_by_class: bool = Field(
+        True, description="Weight classification loss by class frequency."
+    )
+    epochs: int = Field(300, ge=1, description="Maximum training epochs.")
+    batch_size: int = Field(10, ge=1, description="Training batch size.")
 
 
 class GraphConfig(BaseModel):
@@ -98,37 +108,71 @@ class GNNConfig(BaseModel):
         default="gat",
         description="Architecture used for the GraphRoute meta-learner.",
     )
-    hidden_dim: int = Field(128, ge=1)
-    layers: int = Field(2, ge=1)
-    heads: int = Field(4, ge=1)
-    concat: bool = False
-    use_sample_residual: bool = False
-    use_edge_attr: bool = False
+    hidden_dim: int = Field(128, ge=1, description="Hidden embedding width.")
+    layers: int = Field(2, ge=1, description="Number of GNN layers.")
+    heads: int = Field(4, ge=1, description="Attention heads per GAT layer.")
+    concat: bool = Field(
+        False, description="Concatenate heads in intermediate GAT layers."
+    )
+    use_sample_residual: bool = Field(
+        False, description="Add input features to the final sample embeddings."
+    )
+    use_edge_attr: bool = Field(
+        False, description="Use graph edge weights as attention features."
+    )
 
-    output_head: Literal["linear", "dot", "concat_mlp"] = "linear"
-    output_head_norm: bool = False
-    pair_confidence: bool = False
-    pair_competence: Literal["none", "gain"] = "none"
-    pair_only: bool = False
+    output_head: Literal["linear", "dot", "concat_mlp"] = Field(
+        "linear", description="Head used to score each sample-model pair."
+    )
+    output_head_norm: bool = Field(
+        False, description="Normalize embeddings before output scoring."
+    )
+    pair_confidence: bool = Field(
+        False, description="Include model probabilities in concat_mlp features."
+    )
+    pair_competence: Literal["none", "gain"] = Field(
+        "none", description="Optional neighborhood-gain feature for concat_mlp."
+    )
+    pair_only: bool = Field(
+        False, description="Omit model embeddings from concat_mlp features."
+    )
 
-    feat_dropout: float = Field(0.2, ge=0, lt=1)
-    attn_dropout: float = Field(0.2, ge=0, lt=1)
-    edge_dropout: float = Field(0.0, ge=0, lt=1)
+    feat_dropout: float = Field(
+        0.2, ge=0, lt=1, description="Feature-dropout probability."
+    )
+    attn_dropout: float = Field(
+        0.2, ge=0, lt=1, description="Attention-dropout probability."
+    )
+    edge_dropout: float = Field(
+        0.0, ge=0, lt=1, description="Edge-dropout probability."
+    )
 
-    lr: float = Field(5e-4, gt=0)
-    weight_decay: float = Field(1e-4, ge=0)
-    epochs: int = Field(300, ge=1)
-    patience: int = Field(20, ge=1)
+    lr: float = Field(5e-4, gt=0, description="Optimizer learning rate.")
+    weight_decay: float = Field(
+        1e-4, ge=0, description="Optimizer weight decay."
+    )
+    epochs: int = Field(300, ge=1, description="Maximum training epochs.")
+    patience: int = Field(
+        20, ge=1, description="Epochs without improvement before stopping."
+    )
     # 0 computes loss over every training node; a positive value samples nodes.
-    batch_size: int = Field(0, ge=0)
-    es_metric: Literal["val_loss", "val_acc", "val_bacc"] = "val_loss"
+    batch_size: int = Field(
+        0, ge=0, description="Training nodes per batch; zero uses every node."
+    )
+    es_metric: Literal["val_loss", "val_acc", "val_bacc"] = Field(
+        "val_loss", description="Validation metric used to select checkpoints."
+    )
 
     loss: Literal["bce", "focal_bce", "soft_bce", "regression"] = Field(
         default="bce",
         description="Loss function used to train the GNN.",
     )
-    focal_gamma: float = Field(2.0, ge=0)
-    sample_weight_mode: Literal["none", "class_prevalence", "difficulty"] = "none"
+    focal_gamma: float = Field(
+        2.0, ge=0, description="Focusing parameter for focal BCE loss."
+    )
+    sample_weight_mode: Literal[
+        "none", "class_prevalence", "difficulty"
+    ] = Field("none", description="Training-node weighting scheme.")
 
     ens_combination_mode: Literal["soft_weighted_voting", "hard_weighted_voting",
                                   "soft_voting", "hard_voting",
@@ -159,15 +203,21 @@ class GraphRouteSettings(BaseModel):
         description="Sets the GNN training objective.",
     )
 
-    base: BaseConfig = Field(default_factory=BaseConfig)
-    graph: GraphConfig = Field(default_factory=GraphConfig)
-    gnn: GNNConfig = Field(default_factory=GNNConfig)
+    base: BaseConfig = Field(
+        default_factory=BaseConfig, description="Base-model pool training settings."
+    )
+    graph: GraphConfig = Field(
+        default_factory=GraphConfig, description="Sample graph settings."
+    )
+    gnn: GNNConfig = Field(
+        default_factory=GNNConfig, description="Meta-learner and ensemble settings."
+    )
 
 
 class GraphRouteConfig(GraphRouteSettings):
     """Everything needed for one run."""
 
-    task: Task = "classification"
+    task: Task = Field("classification", description="Prediction task.")
     dataset: str = Field(
         min_length=1,
         description="Dataset name used for data loading and persistent pool reuse.",
@@ -178,9 +228,15 @@ class GraphRouteConfig(GraphRouteSettings):
             "Parent directory containing the dataset folder."
         ),
     )
-    num_classes: int = Field(10, ge=1)
-    device: Literal["cpu", "cuda", "mps", "auto"] = "auto"
-    seed: int = 0
+    num_classes: int = Field(
+        10,
+        ge=1,
+        description="Number of classes; scalar regression uses one output.",
+    )
+    device: Literal["cpu", "cuda", "mps", "auto"] = Field(
+        "auto", description="Device used for training and evaluation."
+    )
+    seed: int = Field(0, description="Random seed.")
     val_ratio: float = Field(
         default=0.25,
         gt=0,
@@ -350,7 +406,9 @@ class GraphRouteExperimentConfig(BaseModel):
 
     model_config = {"extra": "allow"}
 
-    sweep: dict[str, SweepValues] = Field(default_factory=dict)
+    sweep: dict[str, SweepValues] = Field(
+        default_factory=dict, description="Cartesian parameter axes."
+    )
 
     @model_validator(mode="before")
     @classmethod
