@@ -206,6 +206,19 @@ def test_experiment_identity_includes_the_custom_feature_extractor():
     assert first_id != second_id
 
 
+def test_experiment_identity_ignores_the_package_version(monkeypatch):
+    cfg = GraphRouteConfig(dataset="demo", num_classes=2)
+    models = [nn.Linear(4, 2)]
+
+    monkeypatch.setattr(
+        "graphroute.experiment._graphroute_version", lambda: "0.1.0")
+    first = experiment_id(cfg, models)
+    monkeypatch.setattr(
+        "graphroute.experiment._graphroute_version", lambda: "0.1.1")
+
+    assert experiment_id(cfg, models) == first
+
+
 def test_completed_and_failed_results_have_resume_semantics(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "graphroute.experiment._graphroute_version", lambda: "test-version")

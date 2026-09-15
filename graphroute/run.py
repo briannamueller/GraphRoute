@@ -18,8 +18,8 @@ from graphroute.gnn import build_gnn
 from graphroute.losses import compute_meta_labels, compute_regression_meta_labels
 from graphroute.training import FallbackModel, compute_pair_features, train_gnn
 from graphroute.pool_cache import (PoolArtifact, automatic_model_ids, cached_pool,
-                                   fingerprint, fingerprint_pool, in_memory_pool,
-                                   pool_directory)
+                                   fingerprint_pool, in_memory_pool,
+                                   pool_directory, pool_training_code_identity)
 from graphroute.pool import (
     apply_calibrators,
     calibrate_pool,
@@ -340,21 +340,6 @@ def _pool_training_kwargs(cfg: GraphRouteConfig) -> dict:
                 task=cfg.task)
 
 
-def _default_code_identity() -> dict:
-    package_dir = Path(__file__).resolve().parent
-    training_code = {
-        name: (package_dir / name).read_text()
-        for name in ("pool.py", "models.py")
-    }
-    try:
-        from importlib.metadata import version
-        package_version = version("graphroute")
-    except Exception:
-        package_version = "unknown"
-    return {"graphroute": package_version,
-            "base_training_code": fingerprint(training_code)}
-
-
 def fit_graphroute(
     cfg: GraphRouteConfig,
     train_set: Dataset,
@@ -429,7 +414,7 @@ def fit_graphroute(
             base_config={"base": cfg.base.model_dump(), "task": cfg.task,
                          "num_classes": cfg.num_classes,
                          "derived_val_ratio": derived_val_ratio},
-            seed=cfg.seed, code_identity=_default_code_identity())
+            seed=cfg.seed, code_identity=pool_training_code_identity())
         pool_kw = _pool_training_kwargs(cfg)
         if cfg.base.split_mode == "oof_stacking":
             meta_set = train_set

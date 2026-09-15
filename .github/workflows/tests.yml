@@ -58,4 +58,4 @@ jobs:
           /tmp/graphroute-wheel-smoke/bin/python -m pip install --upgrade pip
           /tmp/graphroute-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
-          /tmp/graphroute-wheel-smoke/bin/python -c "import graphroute; from graphroute.config import GraphRouteConfig; from graphroute.experiment import load_experiments; from graphroute.run import fit_graphroute"
+          /tmp/graphroute-wheel-smoke/bin/python -c "import graphroute; from graphroute.config import GraphRouteConfig; from graphroute.experiment import load_experiments; from graphroute.pool_cache import pool_training_code_identity; from graphroute.run import fit_graphroute"

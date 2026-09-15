@@ -86,6 +86,16 @@ def fingerprint_pool(*, model_ids: list[str], base_config: dict, seed: int,
     })
 
 
+def pool_training_code_identity() -> str:
+    """Fingerprint the GraphRoute code that trains base-model pools."""
+    package_dir = Path(__file__).resolve().parent
+    sources = {
+        name: (package_dir / name).read_text()
+        for name in ("pool.py", "models.py")
+    }
+    return fingerprint(sources)
+
+
 def safe_component(value: str) -> str:
     """Keep a caller-supplied data identity readable and path-safe."""
     safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in value)

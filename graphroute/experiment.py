@@ -146,7 +146,6 @@ def experiment_id(
         "configuration": cfg.model_dump(mode="json"),
         "models": automatic_model_ids(models),
         "feature_extractor": _feature_extractor_identity(feature_extractor),
-        "graphroute": _graphroute_version(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:16]

@@ -192,16 +192,39 @@ def test_feature_space_flattens_and_concatenates_multi_input_fields():
     assert torch.equal(raw[:, 12:], static.float())
 
 
-def test_binary_loss_is_bce_on_the_positive_logit():
-    """Column 0 gets no gradient; column 1 carries the binary decision."""
+def test_binary_loss_trains_both_class_logits():
     import torch.nn as nn
 
     from graphroute.pool import build_loss_fn
     model = nn.Linear(4, 2)
     build_loss_fn(2, False, torch.device("cpu"))(
         model(torch.randn(16, 4)), torch.randint(0, 2, (16,))).backward()
-    assert model.weight.grad[0].norm() == 0        # column 0: untrained, by design
+    assert model.weight.grad[0].norm() > 0
     assert model.weight.grad[1].norm() > 0
+
+
+def test_binary_loss_uses_the_same_decision_as_argmax():
+    from graphroute.pool import build_loss_fn
+
+    logits = torch.tensor([[100.0, 1.0], [-2.0, 3.0]])
+    labels = torch.tensor([0, 1])
+    loss = build_loss_fn(2, False, torch.device("cpu"))(logits, labels)
+
+    assert logits.argmax(dim=1).tolist() == labels.tolist()
+    assert loss.item() < 0.01
+
+
+def test_binary_class_weighting_upweights_the_rare_class():
+    from torch.utils.data import TensorDataset
+
+    from graphroute.pool import build_loss_fn
+
+    labels = torch.tensor([0] * 9 + [1])
+    dataset = TensorDataset(torch.randn(10, 2), labels)
+    loss = build_loss_fn(2, True, torch.device("cpu"), dataset)
+
+    assert isinstance(loss, torch.nn.CrossEntropyLoss)
+    assert loss.weight[1] > loss.weight[0]
 
 
 def test_balanced_accuracy_is_not_plain_accuracy():

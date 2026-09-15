@@ -6,7 +6,6 @@ from typing import Callable
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from sklearn.model_selection import (
     KFold,
     ShuffleSplit,
@@ -20,49 +19,13 @@ from graphroute.calibration import get_calibrator
 
 # ── Loss construction ───────────────────────────────────────────────────
 
-class _BalancedBCEWithLogits(nn.Module):
-    """Binary cross-entropy with logits using a positive-class weight.
-
-    For a two-output model this reads column 1 only; column 0 is untrained and
-    argmax still selects correctly.
-    """
-
-    def __init__(self, pos_weight: float):
-        super().__init__()
-        self.pos_weight = torch.tensor([pos_weight], dtype=torch.float32)
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        if logits.dim() > 1 and logits.size(1) == 2:
-            logits = logits[:, 1]
-        targets = targets.float()
-        return F.binary_cross_entropy_with_logits(
-            logits, targets,
-            pos_weight=self.pos_weight.to(logits.device),
-        )
-
-
 def build_loss_fn(
     num_classes: int,
     weighted: bool,
     device: torch.device,
     train_dataset: Dataset | None = None,
 ) -> nn.Module:
-    """Build classification loss.
-
-    Binary (num_classes=2): BCEWithLogits with optional pos_weight.
-    Multi-class: CrossEntropy with optional inverse-frequency weights.
-    """
-    if num_classes == 2:
-        if not weighted or train_dataset is None:
-            return _BalancedBCEWithLogits(pos_weight=1.0)
-        counts = torch.zeros(num_classes, dtype=torch.float)
-        for _, y in train_dataset:
-            lbl = int(y.item()) if torch.is_tensor(y) else int(y)
-            if 0 <= lbl < counts.numel():
-                counts[lbl] += 1.0
-        pos_weight = (counts[0] / counts[1].clamp(min=1.0)).clamp(max=50.0)
-        return _BalancedBCEWithLogits(pos_weight=pos_weight.to(device))
-
+    """Build cross-entropy loss with optional inverse-frequency class weights."""
     if not weighted or train_dataset is None:
         return nn.CrossEntropyLoss()
 
