@@ -29,6 +29,9 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+      - name: Check generated configuration reference
+        run: python scripts/generate_config_reference.py --check
+
       # The README points people at this one; run it so it cannot rot.
       - name: Run the quickstart example
         run: OMP_NUM_THREADS=1 python quickstart.py

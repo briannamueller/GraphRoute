@@ -82,20 +82,20 @@ derives validation data from the training set using `val_ratio`.
 
 ## Configuration
 
-Every available setting and its default is defined in
-[`graphroute/config.py`](https://github.com/briannamueller/GraphRoute/blob/main/graphroute/config.py).
-The YAML file uses the same field names. The tables below focus on settings
-whose options require an understanding of GraphRoute itself.
+GraphRoute experiments are configured with YAML. See the
+[configuration reference](https://github.com/briannamueller/GraphRoute/blob/main/docs/reference/configuration.md) for details on all
+available options. The sections below focus on the options central to how
+GraphRoute operates.
 
 ### General
 
-| Argument | Meaning | Available options |
+| Argument | Meaning | Available settings |
 | --- | --- | --- |
 | `loss_target` | Sets the GNN training objective. | `"meta_labels"`: minimizes the loss between predicted competence scores and targets that encode each model’s competence.<br>`"ensemble"`: minimizes the loss between the combined prediction and each sample’s ground-truth class label or regression target. |
 
 ### Model pool training (`base`)
 
-| Argument | Meaning | Available options |
+| Argument | Meaning | Available settings |
 | --- | --- | --- |
 | `base.models` | Names the ordered model pool using entries in the experiment registry. | Nonempty list of registered model names |
 | `base.split_mode` | Chooses how the pool produces out-of-sample predictions for GNN training. | `"oof_stacking"`, `"split_train"` |
@@ -113,7 +113,7 @@ To use all of the training data to train both the base classifiers and the GNN w
     <tr>
       <th>Argument</th>
       <th>Meaning</th>
-      <th>Available options</th>
+      <th>Available settings</th>
     </tr>
   </thead>
   <tbody>
@@ -195,7 +195,7 @@ When oof_stacking is combined with embedding-based representations, GraphRoute u
 
 ### GNN training and dynamic selection (`gnn`)
 
-| Argument | Meaning | Available options |
+| Argument | Meaning | Available settings |
 | --- | --- | --- |
 | `gnn.arch` | Selects the architecture used to learn the dynamic selection rule. | `"gat"`, `"hetero_gat"`, `"graph_gps"`, `"mlp"` |
 | `gnn.loss` | Selects the GNN training loss. | `"bce"`, `"focal_bce"`, `"soft_bce"`, `"regression"` |
