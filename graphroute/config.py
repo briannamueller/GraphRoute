@@ -45,6 +45,11 @@ class BaseConfig(BaseModel):
     optimizer: Literal["SGD", "Adam"] = Field(
         "Adam", description="Optimizer used to train base models."
     )
+    momentum: float = Field(
+        0.9,
+        ge=0,
+        description="Momentum used by the SGD base-model optimizer.",
+    )
     weight_decay: float = Field(
         5e-4, ge=0, description="Optimizer weight decay."
     )

@@ -335,7 +335,8 @@ def _pool_training_kwargs(cfg: GraphRouteConfig) -> dict:
     b = cfg.base
     return dict(num_classes=cfg.num_classes, batch_size=b.batch_size,
                 max_epochs=b.epochs, patience=b.es_patience, lr=b.lr,
-                optimizer_name=b.optimizer, weight_decay=b.weight_decay,
+                optimizer_name=b.optimizer, momentum=b.momentum,
+                weight_decay=b.weight_decay,
                 weighted_by_class=b.weighted_by_class, es_metric=b.es_metric,
                 task=cfg.task)
 

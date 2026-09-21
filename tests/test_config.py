@@ -15,7 +15,7 @@ from graphroute.config import (BaseConfig, GNNConfig, GraphConfig,
 def test_modeling_settings_can_be_combined_with_runtime_context():
     settings = GraphRouteSettings(
         loss_target="ensemble",
-        base={"epochs": 12},
+        base={"epochs": 12, "momentum": 0},
         graph={"k": 9},
         gnn={"arch": "mlp", "hidden_dim": 64},
     )
@@ -29,6 +29,7 @@ def test_modeling_settings_can_be_combined_with_runtime_context():
 
     assert cfg.loss_target == "ensemble"
     assert cfg.base.epochs == 12
+    assert cfg.base.momentum == 0
     assert cfg.graph.k == 9
     assert cfg.gnn.arch == "mlp"
     assert cfg.gnn.hidden_dim == 64
@@ -92,9 +93,11 @@ def test_every_config_field_has_a_generated_flag():
 
 def test_flags_actually_reach_the_config():
     cfg = config_from_args(["--dataset", "test", "--graph-k", "9", "--gnn-hidden-dim", "256",
-                            "--base-epochs", "7", "--gnn-arch", "mlp",
+                            "--base-epochs", "7", "--base-momentum", "0",
+                            "--gnn-arch", "mlp",
                             "--gnn-voting-weight-space", "dense"])
     assert (cfg.graph.k, cfg.gnn.hidden_dim, cfg.base.epochs, cfg.gnn.arch) == (9, 256, 7, "mlp")
+    assert cfg.base.momentum == 0
     assert cfg.gnn.voting_weight_space == "dense"
 
 

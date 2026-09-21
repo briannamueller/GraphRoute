@@ -141,6 +141,7 @@ def fit_classifier(
     patience: int = 20,
     lr: float = 0.0005,
     optimizer_name: str = "Adam",
+    momentum: float = 0.9,
     weight_decay: float = 5e-4,
     task: str = "classification",
     num_classes: int = 10,
@@ -158,6 +159,7 @@ def fit_classifier(
         patience: Early stopping patience.
         lr: Learning rate.
         optimizer_name: "Adam" or "SGD".
+        momentum: Momentum used when optimizer_name is "SGD".
         weight_decay: L2 regularization.
         task: "classification" or "regression".
         num_classes: Number of classes (classification only).
@@ -182,7 +184,7 @@ def fit_classifier(
 
     if optimizer_name.upper() == "SGD":
         optimizer = torch.optim.SGD(model.parameters(), lr=lr,
-                                    momentum=0.9, weight_decay=weight_decay)
+                                    momentum=momentum, weight_decay=weight_decay)
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=lr,
                                      weight_decay=weight_decay)
@@ -232,6 +234,7 @@ def train_pool(
     patience: int = 20,
     lr: float = 0.0005,
     optimizer_name: str = "Adam",
+    momentum: float = 0.9,
     weight_decay: float = 5e-4,
     task: str = "classification",
     num_classes: int = 10,
@@ -251,6 +254,7 @@ def train_pool(
         patience: Early stopping patience.
         lr: Learning rate.
         optimizer_name: "Adam" or "SGD".
+        momentum: Momentum used when optimizer_name is "SGD".
         weight_decay: L2 regularization.
         task: "classification" or "regression".
         num_classes: Number of classes.
@@ -270,7 +274,8 @@ def train_pool(
         best_epoch, best_metric, model = fit_classifier(
             model, train_loader, val_loader, device,
             max_epochs=max_epochs, patience=patience, lr=lr,
-            optimizer_name=optimizer_name, weight_decay=weight_decay,
+            optimizer_name=optimizer_name, momentum=momentum,
+            weight_decay=weight_decay,
             task=task, num_classes=num_classes,
             weighted_by_class=weighted_by_class, es_metric=es_metric,
         )
@@ -294,6 +299,7 @@ def train_pool_oof(
     patience: int = 20,
     lr: float = 0.0005,
     optimizer_name: str = "Adam",
+    momentum: float = 0.9,
     weight_decay: float = 5e-4,
     task: str = "classification",
     num_classes: int = 10,
@@ -319,6 +325,7 @@ def train_pool_oof(
         n_folds: Number of outer CV folds.
         inner_val_ratio: Fraction of each fold's fitting data reserved for
             early stopping.
+        momentum: Momentum used when optimizer_name is "SGD".
         seed: Seeds both the outer folds and the inner splits.
 
     Returns:
@@ -399,7 +406,8 @@ def train_pool_oof(
             best_epoch, _, model = fit_classifier(
                 factory(), inner_train_loader, inner_val_loader, device,
                 max_epochs=max_epochs, patience=patience, lr=lr,
-                optimizer_name=optimizer_name, weight_decay=weight_decay,
+                optimizer_name=optimizer_name, momentum=momentum,
+                weight_decay=weight_decay,
                 task=task, num_classes=num_classes,
                 weighted_by_class=weighted_by_class, es_metric=es_metric,
             )
@@ -426,7 +434,8 @@ def train_pool_oof(
         _, _, model = fit_classifier(
             factory(), full_loader, val_loader, device,
             max_epochs=avg_best, patience=avg_best + 1, lr=lr,
-            optimizer_name=optimizer_name, weight_decay=weight_decay,
+            optimizer_name=optimizer_name, momentum=momentum,
+            weight_decay=weight_decay,
             task=task, num_classes=num_classes,
             weighted_by_class=weighted_by_class, es_metric=es_metric,
         )

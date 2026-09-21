@@ -24,6 +24,7 @@
 | `base.es_patience` | integer | `20` | ≥ 1 | Epochs without improvement before stopping. |
 | `base.lr` | number | `0.0005` | > 0 | Optimizer learning rate. |
 | `base.optimizer` | string | `Adam` | `SGD`, `Adam` | Optimizer used to train base models. |
+| `base.momentum` | number | `0.9` | ≥ 0 | Momentum used by the SGD base-model optimizer. |
 | `base.weight_decay` | number | `0.0005` | ≥ 0 | Optimizer weight decay. |
 | `base.weighted_by_class` | boolean | `true` | — | Weight classification loss by class frequency. |
 | `base.epochs` | integer | `300` | ≥ 1 | Maximum training epochs. |
